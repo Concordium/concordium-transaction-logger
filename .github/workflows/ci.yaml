@@ -37,6 +37,7 @@ jobs:
 
   "lint_clippy":
     name: lint:clippy
+    needs: "lint_fmt"
     # Don't run on draft pull requests
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
@@ -52,7 +53,7 @@ jobs:
           toolchain: ${{ env.RUST_CLIPPY }}
           override: true
           target: ${{ env.TARGET }}
-          components: clippy
+          components: rustfmt, clippy
       - name: Clippy
         run: |
           git config --global url."https://github.com/".insteadOf "git@github.com:"

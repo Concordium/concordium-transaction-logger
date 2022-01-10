@@ -138,10 +138,7 @@ async fn insert_transaction(
     let statement = "INSERT INTO ati (account, summary) VALUES ($1, $2)";
     for affected in affected_addresses.iter() {
         let addr_bytes: &[u8; 32] = affected.as_ref();
-        let values = [
-            &&addr_bytes[..] as &(dyn ToSql + Sync),
-            &id as &(dyn ToSql + Sync),
-        ];
+        let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
         tx.query_opt(statement, &values).await?;
     }
     // insert contracts
@@ -149,11 +146,8 @@ async fn insert_transaction(
     for affected in ts.summary.affected_contracts() {
         let index = affected.index;
         let subindex = affected.subindex;
-        let values = [
-            &(index.index as i64) as &(dyn ToSql + Sync),
-            &(subindex.sub_index as i64),
-            &id,
-        ];
+        let values =
+            [&(index.index as i64) as &(dyn ToSql + Sync), &(subindex.sub_index as i64), &id];
         tx.query_opt(statement_contract, &values).await?;
     }
     Ok(())
@@ -170,11 +164,13 @@ async fn insert_special(
     // these are canonical addresses so there is no need to resolve anything
     // additional.
     let affected_addresses = match &so {
-        SpecialTransactionOutcome::BakingRewards { baker_rewards, .. } => {
-            baker_rewards.keys().copied().collect::<Vec<_>>()
-        }
+        SpecialTransactionOutcome::BakingRewards {
+            baker_rewards,
+            ..
+        } => baker_rewards.keys().copied().collect::<Vec<_>>(),
         SpecialTransactionOutcome::Mint {
-            foundation_account, ..
+            foundation_account,
+            ..
         } => vec![*foundation_account],
         SpecialTransactionOutcome::FinalizationRewards {
             finalization_rewards,
@@ -196,10 +192,7 @@ async fn insert_special(
     let statement = "INSERT INTO ati (account, summary) VALUES ($1, $2)";
     for affected in affected_addresses.iter() {
         let addr_bytes: &[u8; 32] = affected.as_ref();
-        let values = [
-            &&addr_bytes[..] as &(dyn ToSql + Sync),
-            &id as &(dyn ToSql + Sync),
-        ];
+        let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
         tx.query_opt(statement, &values).await?;
     }
     Ok(())
@@ -267,9 +260,8 @@ const MAX_CONNECT_ATTEMPTS: u64 = 6;
 async fn check_node_and_wait(node: &mut endpoints::Client, max_behind: u32) -> anyhow::Result<()> {
     let info = node.get_consensus_status().await?;
     let now = chrono::Utc::now();
-    if let Some((lft, duration)) = info
-        .last_finalized_time
-        .map(|t| (t, t.signed_duration_since(now)))
+    if let Some((lft, duration)) =
+        info.last_finalized_time.map(|t| (t, t.signed_duration_since(now)))
     {
         let secs = duration.num_seconds();
         if !(0..=max_behind.into()).contains(&secs) {
@@ -291,11 +283,8 @@ enum QueryFailure {
 
 /// Data sent by the node query task to the transaction insertion task.
 /// Contains all the information needed to build the transaction index.
-type TransactionLogData = (
-    BlockInfo,
-    Vec<BlockItemSummaryWithCanonicalAddresses>,
-    Vec<SpecialTransactionOutcome>,
-);
+type TransactionLogData =
+    (BlockInfo, Vec<BlockItemSummaryWithCanonicalAddresses>, Vec<SpecialTransactionOutcome>);
 
 #[repr(transparent)]
 #[derive(Eq, Debug, Clone, Copy)]
@@ -336,6 +325,7 @@ enum NodeError {
 
 /// Return Err if querying the node failed.
 /// Return Ok(()) if the channel to the database was closed.
+#[allow(clippy::too_many_arguments)]
 async fn use_node(
     node_ep: endpoints::Endpoint,
     token: &str,
@@ -353,19 +343,13 @@ async fn use_node(
     // block. This will only happen the first time this function is successfully
     // invoked.
     if canonical_cache.is_empty() {
-        let info = node
-            .get_consensus_status()
-            .await
-            .context("Error querying consensus status.")?;
+        let info = node.get_consensus_status().await.context("Error querying consensus status.")?;
         let accounts = node
             .get_account_list(&info.last_finalized_block)
             .await
             .context("Error querying account list.")?;
         // this relies on the fact that get_account_list returns canonical addresses.
-        log::debug!(
-            "Initializing the address cache with {} accounts.",
-            accounts.len()
-        );
+        log::debug!("Initializing the address cache with {} accounts.", accounts.len());
         for addr in accounts {
             canonical_cache.insert(AccountAddressEq(addr));
         }
@@ -431,14 +415,12 @@ async fn use_node(
                                 }
                             }
                         }
-                        with_addresses
-                            .push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
+                        with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
+                            summary,
+                            addresses,
+                        })
                     }
-                    if sender
-                        .send((info, with_addresses, summary.special_events))
-                        .await
-                        .is_err()
-                    {
+                    if sender.send((info, with_addresses, summary.special_events)).await.is_err() {
                         log::warn!(
                             "The database connection has been closed. Terminating node queries."
                         );
@@ -508,9 +490,7 @@ async fn write_to_db(
     let mut db = try_reconnect(&config, &stop_flag).await?;
     create_tables(&db).await?;
 
-    let height = get_last_block_height(&db)
-        .await?
-        .map_or(0.into(), |h| h.next());
+    let height = get_last_block_height(&db).await?.map_or(0.into(), |h| h.next());
     height_sender
         .send(height)
         .map_err(|_| anyhow::anyhow!("Cannot send height to the node worker."))?;
@@ -579,11 +559,7 @@ async fn write_to_db(
                 retry = Some((bi, item_summaries, special_events));
             } else {
                 successive_errors = 0;
-                log::debug!(
-                    "Processed block {} at height {}.",
-                    bi.block_hash,
-                    bi.block_height
-                );
+                log::debug!("Processed block {} at height {}.", bi.block_hash, bi.block_height);
             }
         } else {
             break;
@@ -631,10 +607,7 @@ async fn main() -> anyhow::Result<()> {
         let matches = app.get_matches();
         App::from_clap(&matches)
     };
-    anyhow::ensure!(
-        !app.endpoint.is_empty(),
-        "At least one node must be provided."
-    );
+    anyhow::ensure!(!app.endpoint.is_empty(), "At least one node must be provided.");
     let config = app.config;
 
     let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
@@ -673,12 +646,8 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown_handler_handle = tokio::spawn(set_shutdown(stop_flag.clone()));
 
-    let db_write_handle = tokio::spawn(write_to_db(
-        config,
-        height_sender,
-        receiver,
-        stop_flag.clone(),
-    ));
+    let db_write_handle =
+        tokio::spawn(write_to_db(config, height_sender, receiver, stop_flag.clone()));
     // The height we should start querying the node at.
     // If the sender died we simply terminate the program.
     let mut height = height_receiver.await?;
@@ -721,17 +690,11 @@ async fn main() -> anyhow::Result<()> {
         .await
         {
             Err(NodeError::ConnectionError(e)) => {
-                log::error!(
-                    "Failed to connect to node due to {}. Will attempt another node.",
-                    e
-                );
+                log::error!("Failed to connect to node due to {}. Will attempt another node.", e);
             }
             Err(NodeError::OtherError(e)) => {
                 last_success = idx;
-                log::error!(
-                    "Node query failed due to: {}. Will attempt another node.",
-                    e
-                );
+                log::error!("Node query failed due to: {}. Will attempt another node.", e);
             }
             Ok(()) => break,
         }
