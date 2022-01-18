@@ -9,4 +9,4 @@ RUN cargo build --release
 
 FROM ubuntu:${ubuntu_image_tag}
 COPY --from=build /build/target/release/transaction-logger /usr/local/bin/
-ENTRYPOINT [ "/usr/local/bin/transaction-logger" ]
+ENTRYPOINT [ "transaction-logger" ]
