@@ -22,7 +22,6 @@ pipeline {
                       --label build_image="${build_image}" \
                       --build-arg base_image="${base_image}" \
                       --label base_image="${base_image}" \
-                      -f Dockerfile \
                       -t "${image_name}" \
                       .
                 '''.stripIndent()
