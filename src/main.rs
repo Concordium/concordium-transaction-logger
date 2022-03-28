@@ -258,20 +258,24 @@ const WAIT_MILLISECONDS: u64 = 500;
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
 
 async fn check_node_and_wait(node: &mut endpoints::Client, max_behind: u32) -> anyhow::Result<()> {
-    let info = node.get_consensus_status().await?;
+    let info = node
+        .get_consensus_status()
+        .await
+        .context("Could not query consensus status from the node.")?;
+    let lft = info
+        .last_finalized_time
+        .context("Node is likely behind since it has never witnessed a finalization.")?;
     let now = chrono::Utc::now();
-    if let Some((lft, duration)) =
-        info.last_finalized_time.map(|t| (t, t.signed_duration_since(now)))
-    {
-        let secs = duration.num_seconds();
-        if !(0..=max_behind.into()).contains(&secs) {
-            anyhow::bail!("Node is likely behind. Its last finalized time is {}.", lft);
-        } else {
-            tokio::time::sleep(std::time::Duration::from_millis(WAIT_MILLISECONDS)).await;
-            Ok(())
-        }
+    let diff_secs = now.signed_duration_since(lft).num_seconds();
+    if diff_secs > max_behind.into() {
+        anyhow::bail!(
+            "Node is likely behind. Its last finalized time is {}, our time is {}.",
+            lft,
+            now
+        );
     } else {
-        anyhow::bail!("Node is likely behind since it has never witnessed a finalization.");
+        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MILLISECONDS)).await;
+        Ok(())
     }
 }
 
@@ -657,8 +661,10 @@ async fn main() -> anyhow::Result<()> {
     // by the canonical address.
     let mut canonical_cache = HashSet::new();
     // To make sure we do not end up in an infinite loop in case all reconnects fail
-    // we count reconnects.
-    let mut last_success: u64 = 0;
+    // we count reconnects. We deem a node connection successful if it increases
+    // maximum achieved height byt at least 1.
+    let mut max_height = height;
+    let mut last_success = 0;
     let num_nodes = app.endpoint.len() as u64;
     for (node_ep, idx) in app.endpoint.into_iter().cycle().zip(0u64..) {
         if stop_flag.load(Ordering::Acquire) {
@@ -693,10 +699,13 @@ async fn main() -> anyhow::Result<()> {
                 log::error!("Failed to connect to node due to {}. Will attempt another node.", e);
             }
             Err(NodeError::OtherError(e)) => {
-                last_success = idx;
                 log::error!("Node query failed due to: {}. Will attempt another node.", e);
             }
             Ok(()) => break,
+        }
+        if height > max_height {
+            last_success = idx;
+            max_height = height;
         }
     }
     db_write_handle.abort();
