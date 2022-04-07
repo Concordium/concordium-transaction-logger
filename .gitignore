@@ -1,4 +1,5 @@
-.stack-work/
+.*
+!*ignore
 *~
 *.swp
 *.out
@@ -7,14 +8,7 @@
 *.a
 *.pdf
 *.csv
-
-.stack-work
-target
-*.json
-/.dir-locals.el
 *.bin
-pkg
-*.hie
-*.iml
-*.state-*
-*.state
+
+target
+/.dir-locals.el
