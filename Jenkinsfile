@@ -2,14 +2,18 @@
 pipeline {
     agent any
     environment {
-        ecr_repo_domain = '192549843005.dkr.ecr.eu-west-1.amazonaws.com'
-        image_repo = "${ecr_repo_domain}/concordium/transaction-logger"
+        image_repo = "concordium/transaction-logger"
         image_name = "${image_repo}:${image_tag}"
     }
     stages {
-        stage('ecr-login') {
+        stage('dockerhub-login') {
+            environment {
+                // Defines 'CRED_USR' and 'CRED_PSW'
+                // (see 'https://www.jenkins.io/doc/book/pipeline/jenkinsfile/#handling-credentials').
+                CRED = credentials('jenkins-dockerhub')
+            }
             steps {
-                ecrLogin(env.ecr_repo_domain, 'eu-west-1')
+                sh 'docker login --username "${CRED_USR}" --password "${CRED_PSW}"'
             }
         }
         stage('build') {
