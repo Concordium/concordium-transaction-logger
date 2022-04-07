@@ -9,6 +9,7 @@
 *.pdf
 *.csv
 *.bin
+*.json
 
 target
 /.dir-locals.el
