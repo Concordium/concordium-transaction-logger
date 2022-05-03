@@ -401,7 +401,7 @@ async fn use_node(
                         for address in affected_addresses.into_iter() {
                             if let Some(addr) = canonical_cache.get(address.as_ref()) {
                                 let addr = AccountAddress::from(*addr);
-                                if !seen.insert(addr) {
+                                if seen.insert(addr) {
                                     addresses.push(addr);
                                 }
                             } else {
@@ -410,7 +410,7 @@ async fn use_node(
                                     .await
                                     .context("Error querying account info.")?;
                                 let addr = ainfo.account_address();
-                                if !seen.insert(addr) {
+                                if seen.insert(addr) {
                                     log::debug!("Discovered new address {}", addr);
                                     addresses.push(addr);
                                     canonical_cache.insert(AccountAddressEq(addr));
