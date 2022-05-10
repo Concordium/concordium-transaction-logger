@@ -163,7 +163,7 @@ async fn insert_special(
 ) -> Result<(), postgres::Error> {
     // these are canonical addresses so there is no need to resolve anything
     // additional.
-    let affected_addresses = match &so {
+    let affected_addresses = match so {
         SpecialTransactionOutcome::BakingRewards {
             baker_rewards,
             ..
@@ -181,6 +181,22 @@ async fn insert_special(
             foundation_account,
             ..
         } => vec![*baker, *foundation_account],
+        SpecialTransactionOutcome::PaydayFoundationReward {
+            foundation_account,
+            ..
+        } => vec![*foundation_account],
+        SpecialTransactionOutcome::PaydayAccountReward {
+            account,
+            ..
+        } => vec![*account],
+        // the following two are only administrative events, they don't transfer to the account,
+        // only to the virtual account.
+        SpecialTransactionOutcome::BlockAccrueReward {
+            ..
+        } => Vec::new(),
+        SpecialTransactionOutcome::PaydayPoolReward {
+            ..
+        } => Vec::new(),
     };
     let summary_row = SummaryRow {
         block_hash,
@@ -340,9 +356,8 @@ async fn use_node(
     canonical_cache: &mut HashSet<AccountAddressEq>,
     max_behind: u32, // maximum number of seconds a node can be behind before it is deemed "behind"
 ) -> Result<(), NodeError> {
-    let mut node = endpoints::Client::connect(node_ep, token.into())
-        .await
-        .map_err(NodeError::ConnectionError)?;
+    let mut node =
+        endpoints::Client::connect(node_ep, token).await.map_err(NodeError::ConnectionError)?;
     // if the cache is empty we seed it with all accounts at the last finalized
     // block. This will only happen the first time this function is successfully
     // invoked.
@@ -389,9 +404,18 @@ async fn use_node(
         for result in futures::future::join_all(handles).await {
             match result? {
                 Ok((info, summary)) => {
-                    let mut with_addresses =
-                        Vec::with_capacity(summary.transaction_summaries.len());
-                    for summary in summary.transaction_summaries.into_iter() {
+                    let (transaction_summaries, special_events) = match summary {
+                        concordium_rust_sdk::types::BlockSummary::V0 {
+                            data,
+                            ..
+                        } => (data.transaction_summaries, data.special_events),
+                        concordium_rust_sdk::types::BlockSummary::V1 {
+                            data,
+                            ..
+                        } => (data.transaction_summaries, data.special_events),
+                    };
+                    let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
+                    for summary in transaction_summaries {
                         let affected_addresses = summary.affected_addresses();
                         let mut addresses = Vec::with_capacity(affected_addresses.len());
                         // resolve canonical addresses. This part is only needed because the index
@@ -409,7 +433,7 @@ async fn use_node(
                                     .get_account_info(address, &info.block_hash)
                                     .await
                                     .context("Error querying account info.")?;
-                                let addr = ainfo.account_address();
+                                let addr = ainfo.account_address;
                                 if seen.insert(addr) {
                                     log::debug!("Discovered new address {}", addr);
                                     addresses.push(addr);
@@ -424,7 +448,7 @@ async fn use_node(
                             addresses,
                         })
                     }
-                    if sender.send((info, with_addresses, summary.special_events)).await.is_err() {
+                    if sender.send((info, with_addresses, special_events)).await.is_err() {
                         log::warn!(
                             "The database connection has been closed. Terminating node queries."
                         );
@@ -463,7 +487,7 @@ async fn try_reconnect(
             Err(e) if i < MAX_CONNECT_ATTEMPTS => {
                 let delay = std::time::Duration::from_millis(500 * (1 << i));
                 log::error!(
-                    "Could not connect to the database due to {}. Reconnecting in {}ms",
+                    "Could not connect to the database due to {:#}. Reconnecting in {}ms",
                     e,
                     delay.as_millis()
                 );
@@ -473,7 +497,7 @@ async fn try_reconnect(
             }
             Err(e) => {
                 log::error!(
-                    "Could not connect to the database in {} attempts. Last attempt failed with \
+                    "Could not connect to the database in {:#} attempts. Last attempt failed with \
                      reason {}.",
                     MAX_CONNECT_ATTEMPTS,
                     e
@@ -526,7 +550,7 @@ async fn write_to_db(
                     500 * (1 << std::cmp::min(successive_errors, 8)),
                 );
                 log::error!(
-                    "Database connection lost due to {}. Will attempt to reconnect in {}ms.",
+                    "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
                     e,
                     delay.as_millis()
                 );
@@ -696,10 +720,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         {
             Err(NodeError::ConnectionError(e)) => {
-                log::error!("Failed to connect to node due to {}. Will attempt another node.", e);
+                log::error!("Failed to connect to node due to {:#}. Will attempt another node.", e);
             }
             Err(NodeError::OtherError(e)) => {
-                log::error!("Node query failed due to: {}. Will attempt another node.", e);
+                log::error!("Node query failed due to: {:#}. Will attempt another node.", e);
             }
             Ok(()) => break,
         }
