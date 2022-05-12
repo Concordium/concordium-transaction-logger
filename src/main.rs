@@ -497,8 +497,8 @@ async fn try_reconnect(
             }
             Err(e) => {
                 log::error!(
-                    "Could not connect to the database in {:#} attempts. Last attempt failed with \
-                     reason {}.",
+                    "Could not connect to the database in {} attempts. Last attempt failed with \
+                     reason {:#}.",
                     MAX_CONNECT_ATTEMPTS,
                     e
                 );
