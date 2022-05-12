@@ -60,12 +60,14 @@ Changes to any of the packages must be such that
 - ```rust fmt``` makes no changes.
 
 Everything in this repository should build with stable rust at the moment (at least version 1.53 and up), however the fmt tool must be from a nightly release since some of the configuration options are not stable. One way to run the `fmt` tool is
-```
+
+```shell
  cargo +nightly-2019-11-13 fmt
 ```
 (the exact version used by the CI can be found in [.github/workflows/ci.yaml](.github/workflows/ci.yaml) file).
 You will need to have a recent enough nightly version installed, which can be done via
-```
+
+```shell
 rustup toolchain install nightly-2019-11-13
 ```
 or similar, using the [rustup](https://rustup.rs/) tool. See the documentation of the tool for more details.
