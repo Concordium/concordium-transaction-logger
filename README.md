@@ -50,6 +50,114 @@ database connection being lost. The key design features of the service are
     - block arrival latency
     - time of the last finalized block
 
+# Database format
+
+The transaction logging can be used to construct additional indices that are not
+needed for consensus and thus not provided by the node directly. The transaction
+logger at the moment creates an index of transactions by affected account and
+smart contract. This can be used for monitoring incoming transactions on an
+account. Only finalized transactions are logged.
+
+The database must exist before the logger starts.  If correct tables exist in the database then they will be used, otherwise the following will be executed upon startup
+```sql
+CREATE TABLE summaries(id SERIAL8 PRIMARY KEY UNIQUE, block BYTEA NOT NULL, timestamp INT8 NOT NULL, height INT8 NOT NULL, summary JSONB NOT NULL);
+CREATE TABLE ati(id SERIAL8, account BYTEA NOT NULL, summary INT8 NOT NULL, CONSTRAINT ati_pkey PRIMARY KEY (account, id), CONSTRAINT ati_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE RESTRICT  ON UPDATE RESTRICT);
+CREATE TABLE cti(id SERIAL8, index INT8 NOT NULL,subindex INT8 NOT NULL,summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY (index, subindex, id), CONSTRAINT cti_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE RESTRICT  ON UPDATE RESTRICT);
+```
+
+which creates three tables, `ati`, `cti`, and `summaries`. The `ati` and `cti`
+stand for **a**ccount, respectively **c**ontract, **t**ransaction **i**ndex.
+They contain an index so that a transaction affecting a given contract or
+account can be quickly looked up. The outcome of each transaction is in the
+`summaries` table.
+
+The summary that is stored in the `summary` column of the `summaries` table is stored as a JSON value. The contents is either of the form
+```json
+{
+    "Left": ...
+}
+```
+where `...` is a transaction outcome in the same format as it appears in block summaries, or
+```json
+{
+    "Right": ...
+}
+```
+where `...` is a special transaction outcome in the same format as it appears in block summaries.
+
+## Account transaction index
+
+The meaning of the `(id, account, summary_id)` row in the `ati` table is that account `account` was affected by transaction pointed to by `summary_id`. **Affected** here means that either the account sent the transaction, or it was the target of it, for example another account sent a transfer to it. Note that accounts are stored in binary format, so as 32-byte arrays, and not in their Base58check encoding.
+
+The data is written to the table upon each finalization from oldest to newest block finalized by that round.
+For each block transactions are written in the order they appear in the block, that is, from start to end of the block.
+The ids in all tables are automatically generated. Note that they should not be relied upon to be strictly sequential. Postgres does not guarantee this. It only guarantees that they will be strictly increasing, but there might be gaps.
+
+The logger will never update any rows in the database, it only ever appends data to the tables.
+
+## Contract transaction index
+
+The meaning is analogous to the account transaction index, except here the logger logs transactions that affect smart contracts.
+
+# Examples
+
+## Most recent transactions
+
+The database can be polled for transactions affecting a given account, for example to get the most recent transactions affecting an account a query like the following could be used
+
+```sql
+SELECT summaries.block, summaries.timestamp, summaries.summary
+FROM ati JOIN summaries ON ati.summary = summaries.id
+WHERE ati.account = $1
+ORDER BY ati.id DESC LIMIT $2
+```
+
+where `$1` would be the given account address, and `$2` the number of desired transactions.
+
+## Notifications
+
+Postgres supports [Notifications](https://www.postgresql.org/docs/current/sql-notify.html) and [Listening](https://www.postgresql.org/docs/current/sql-listen.html) on channels. This can be used to replace polling for updates, in some cases, with subscriptions.
+
+One way to achieve this is to register triggers on, `ati` and `cti` tables (or just one of them).
+For example, a trigger that would send notifications to `listen_channel` for each row inserted into the `ati` table would look as follows.
+
+```sql
+CREATE FUNCTION pg_temp.notify_insert ()
+RETURNS trigger
+LANGUAGE plpgsql
+as $$
+BEGIN
+  PERFORM (
+    WITH summary AS
+    (
+      SELECT summaries.summary FROM summaries WHERE summaries.id = NEW.summary
+    )
+    SELECT pg_notify(TG_ARGV[0], summary::text) from summary
+  );
+  RETURN NULL;
+END;
+$$;
+
+CREATE TRIGGER notify_on_insert_into_ati
+AFTER INSERT
+ON ati
+FOR EACH ROW
+EXECUTE PROCEDURE pg_temp.notify_insert('listen_channel');
+
+LISTEN listen_channel;
+```
+Note that the use of the `pg_temp` schema means that these triggers will only apply to the current Postgres session, i.e., they will be dropped upon disconnect. If this is not desired then use a different schema (or no schema at all).
+
+For each row that is inserted this will notify the `listen_channel` with the summary. Note that it is not guaranteed that there will be one notification for each insertion. If summaries are equal then Postgres is allowed to coalesce multiple notifications into one. To get one notification per insertion adjust the summary to include the row id, for example.
+
+### Caveats
+
+- Notifications are not queued if there are no listeners on a given channel. If the client disconnects and reconnects any insertions that happened during the time the client was offline will not be sent on the channel. Listeners must put additional recovery logic on top to make sure they do not miss events in such cases.
+
+- Postgres has a limited buffer for notifications (by default 8GB). If the client that is listening is too slow in processing them then eventually this buffer will get full, and notifications will start being dropped.
+
+- The size of a notification payload is limited to `8kB`, so notifications cannot be used as a general push mechanism. Instead they are best used to notify of events, so that the client knows to make relevant queries as a result. This might be more efficient if it replaces frequent polling for events that happen rarely.
+
 # Contributing
 
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.0-4baaaa.svg)](https://github.com/Concordium/.github/blob/main/.github/CODE_OF_CONDUCT.md)
