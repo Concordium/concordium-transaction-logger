@@ -329,7 +329,7 @@ dependencies = [
 
 [[package]]
 name = "concordium-contracts-common"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "base58check",
  "chrono",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "concordium-rust-sdk"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "aggregate_sig",
  "anyhow",
@@ -358,6 +358,8 @@ dependencies = [
  "hex",
  "id",
  "num",
+ "num-bigint 0.4.3",
+ "num-traits",
  "prost",
  "rand 0.7.3",
  "random_oracle",
@@ -1654,6 +1656,7 @@ dependencies = [
  "rand_chacha 0.2.2",
  "rand_core 0.5.1",
  "rand_hc 0.2.0",
+ "rand_pcg",
 ]
 
 [[package]]
@@ -1722,6 +1725,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d51e9f596de227fda2ea6c84607f5558e196eeaf43c986b724ba4fb8fdf497e7"
 dependencies = [
  "rand_core 0.6.3",
+]
+
+[[package]]
+name = "rand_pcg"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16abd0c1b639e9eb4d7c50c0b8100b0d0f849be2349829c740fe8e6eb4816429"
+dependencies = [
+ "rand_core 0.5.1",
 ]
 
 [[package]]
@@ -2321,7 +2333,7 @@ dependencies = [
 
 [[package]]
 name = "transaction-logger"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "chrono",
