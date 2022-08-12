@@ -146,8 +146,7 @@ async fn insert_transaction(
     for affected in ts.summary.affected_contracts() {
         let index = affected.index;
         let subindex = affected.subindex;
-        let values =
-            [&(index.index as i64) as &(dyn ToSql + Sync), &(subindex.sub_index as i64), &id];
+        let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
         tx.query_opt(statement_contract, &values).await?;
     }
     Ok(())
@@ -316,8 +315,8 @@ impl From<AccountAddressEq> for AccountAddress {
 
 impl PartialEq for AccountAddressEq {
     fn eq(&self, other: &Self) -> bool {
-        let bytes_1: &[u8; 32] = &self.0.as_ref();
-        let bytes_2: &[u8; 32] = &other.0.as_ref();
+        let bytes_1: &[u8; 32] = self.0.as_ref();
+        let bytes_2: &[u8; 32] = other.0.as_ref();
         bytes_1[0..29] == bytes_2[0..29]
     }
 }
