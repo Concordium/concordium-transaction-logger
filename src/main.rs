@@ -260,8 +260,8 @@ async fn create_tables(db: &DatabaseClient) -> Result<(), postgres::Error> {
                       INT8 NOT NULL, CONSTRAINT ati_pkey PRIMARY KEY (account, id), CONSTRAINT \
                       ati_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE \
                       RESTRICT  ON UPDATE RESTRICT)";
-    let create_cti = "CREATE TABLE IF NOT EXISTS cti(id SERIAL8, index INT8 NOT NULL,subindex \
-                      INT8 NOT NULL,summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY \
+    let create_cti = "CREATE TABLE IF NOT EXISTS cti(id SERIAL8, index INT8 NOT NULL, subindex \
+                      INT8 NOT NULL, summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY \
                       (index, subindex, id), CONSTRAINT cti_summary_fkey FOREIGN KEY(summary) \
                       REFERENCES summaries(id) ON DELETE RESTRICT ON UPDATE RESTRICT)";
     db.as_ref().batch_execute(create_summaries).await?;
@@ -367,7 +367,7 @@ async fn use_node(
             .await
             .context("Error querying account list.")?;
         // this relies on the fact that get_account_list returns canonical addresses.
-        log::debug!("Initializing the address cache with {} accounts.", accounts.len());
+        log::info!("Initializing the address cache with {} accounts.", accounts.len());
         for addr in accounts {
             canonical_cache.insert(AccountAddressEq(addr));
         }
@@ -586,7 +586,7 @@ async fn write_to_db(
                 retry = Some((bi, item_summaries, special_events));
             } else {
                 successive_errors = 0;
-                log::debug!("Processed block {} at height {}.", bi.block_hash, bi.block_height);
+                log::info!("Processed block {} at height {}.", bi.block_hash, bi.block_height);
             }
         } else {
             break;
@@ -685,7 +685,7 @@ async fn main() -> anyhow::Result<()> {
     let mut canonical_cache = HashSet::new();
     // To make sure we do not end up in an infinite loop in case all reconnects fail
     // we count reconnects. We deem a node connection successful if it increases
-    // maximum achieved height byt at least 1.
+    // maximum achieved height by at least 1.
     let mut max_height = height;
     let mut last_success = 0;
     let num_nodes = app.endpoint.len() as u64;
@@ -696,7 +696,7 @@ async fn main() -> anyhow::Result<()> {
         if idx.saturating_sub(last_success) >= num_nodes {
             // we skipped all the nodes without success.
             let delay = std::time::Duration::from_secs(5);
-            log::debug!(
+            log::error!(
                 "Connections to all nodes have failed. Pausing for {}s before trying node {} \
                  again.",
                 delay.as_secs(),
@@ -705,7 +705,7 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(delay).await;
         }
         // connect to the node.
-        log::debug!("Attempting to use node {}", node_ep.uri());
+        log::info!("Attempting to use node {}", node_ep.uri());
         match use_node(
             node_ep,
             &app.token,
@@ -719,10 +719,10 @@ async fn main() -> anyhow::Result<()> {
         .await
         {
             Err(NodeError::ConnectionError(e)) => {
-                log::error!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
             }
             Err(NodeError::OtherError(e)) => {
-                log::error!("Node query failed due to: {:#}. Will attempt another node.", e);
+                log::warn!("Node query failed due to: {:#}. Will attempt another node.", e);
             }
             Ok(()) => break,
         }

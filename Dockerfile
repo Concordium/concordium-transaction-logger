@@ -1,7 +1,7 @@
 ARG build_image
 ARG base_image
 FROM ${build_image} AS build
-# 'rustup' is needed by run custom build command for 'concordium-rust-sdk'.
+# 'rustfmt' is needed by run custom build command for 'concordium-rust-sdk'.
 RUN rustup component add rustfmt
 WORKDIR /build
 COPY . .
