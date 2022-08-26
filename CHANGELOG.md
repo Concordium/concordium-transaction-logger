@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.4.0
+
+- Bump Node SDK.
+- Revise log levels.
+
 ## 0.3.1
 
 - Fix parsing of level1 and root key updates in block summaries.
