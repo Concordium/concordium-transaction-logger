@@ -1,8 +1,8 @@
 ARG build_image
 ARG base_image
 FROM ${build_image} AS build
-# 'rustfmt' is needed by run custom build command for 'concordium-rust-sdk'.
-RUN rustup component add rustfmt
+# Install system dependencies ('cmake' is a dependency of Rust crate 'prost-build').
+RUN apt update && apt install -y cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .
 RUN cargo build --release
