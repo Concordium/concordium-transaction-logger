@@ -367,7 +367,7 @@ async fn use_node(
             .await
             .context("Error querying account list.")?;
         // this relies on the fact that get_account_list returns canonical addresses.
-        log::info!("Initializing the address cache with {} accounts.", accounts.len());
+        log::debug!("Initializing the address cache with {} accounts.", accounts.len());
         for addr in accounts {
             canonical_cache.insert(AccountAddressEq(addr));
         }
