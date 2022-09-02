@@ -191,3 +191,20 @@ cargo build --release
 ```
 
 This produces a single binary `target/release/transaction-logger`.
+
+**Make sure that you have checked and initialized submodules before the build**
+e.g., using
+```
+git submodule update --init --recursive
+```
+
+### Docker build
+
+A [Dockerfile](./Dockerfile) is available that produces a self-contained image
+with the service installed and set as the entrypoint.
+
+This docker image can be built using
+```
+docker build --build-arg build_image=rust:1.56-buster --build-arg base_image=debian:buster .
+```
+which produces a debian-buster based image.
