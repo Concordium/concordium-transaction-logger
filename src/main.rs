@@ -2,7 +2,6 @@ use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
     common::{types::Timestamp, SerdeSerialize},
-    endpoints,
     id::types::AccountAddress,
     postgres,
     postgres::DatabaseClient,
@@ -10,7 +9,9 @@ use concordium_rust_sdk::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
         SpecialTransactionOutcome,
     },
+    v2,
 };
+use futures::TryStreamExt;
 use std::{
     collections::HashSet,
     hash::Hash,
@@ -31,18 +32,11 @@ struct App {
     #[structopt(
         long = "node",
         help = "GRPC interface of the node(s).",
-        default_value = "http://localhost:10000",
+        default_value = "http://localhost:20000",
         use_delimiter = true,
         env = "TRANSACTION_LOGGER_NODES"
     )]
-    endpoint:     Vec<endpoints::Endpoint>,
-    #[structopt(
-        long = "rpc-token",
-        help = "GRPC interface access token for accessing all the nodes.",
-        default_value = "rpcadmin",
-        env = "TRANSACTION_LOGGER_RPC_TOKEN"
-    )]
-    token:        String,
+    endpoint:     Vec<v2::Endpoint>,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
@@ -269,36 +263,7 @@ async fn create_tables(db: &DatabaseClient) -> Result<(), postgres::Error> {
     db.as_ref().batch_execute(create_cti).await
 }
 
-const WAIT_MILLISECONDS: u64 = 500;
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
-
-async fn check_node_and_wait(node: &mut endpoints::Client, max_behind: u32) -> anyhow::Result<()> {
-    let info = node
-        .get_consensus_status()
-        .await
-        .context("Could not query consensus status from the node.")?;
-    let lft = info
-        .last_finalized_time
-        .context("Node is likely behind since it has never witnessed a finalization.")?;
-    let now = chrono::Utc::now();
-    let diff_secs = now.signed_duration_since(lft).num_seconds();
-    if diff_secs > max_behind.into() {
-        anyhow::bail!(
-            "Node is likely behind. Its last finalized time is {}, our time is {}.",
-            lft,
-            now
-        );
-    } else {
-        tokio::time::sleep(std::time::Duration::from_millis(WAIT_MILLISECONDS)).await;
-        Ok(())
-    }
-}
-
-enum QueryFailure {
-    NoBlocks,
-    NotFinalized,
-    NotFound,
-}
 
 /// Data sent by the node query task to the transaction insertion task.
 /// Contains all the information needed to build the transaction index.
@@ -337,6 +302,15 @@ enum NodeError {
     /// Error establishing connection.
     #[error("Error connecting to the node {0}.")]
     ConnectionError(tonic::transport::Error),
+    /// No finalization in some time.
+    #[error("Timeout.")]
+    Timeout,
+    /// Error establishing connection.
+    #[error("Error during query {0}.")]
+    NetworkError(#[from] v2::Status),
+    /// Query error.
+    #[error("Error querying the node {0}.")]
+    QueryError(#[from] v2::QueryError),
     /// Query errors, etc.
     #[error("Error querying the node {0}.")]
     OtherError(#[from] anyhow::Error),
@@ -346,8 +320,7 @@ enum NodeError {
 /// Return Ok(()) if the channel to the database was closed.
 #[allow(clippy::too_many_arguments)]
 async fn use_node(
-    node_ep: endpoints::Endpoint,
-    token: &str,
+    node_ep: v2::Endpoint,
     sender: &tokio::sync::mpsc::Sender<TransactionLogData>,
     height: &mut AbsoluteBlockHeight, // start height
     max_parallel: u32,
@@ -355,119 +328,111 @@ async fn use_node(
     canonical_cache: &mut HashSet<AccountAddressEq>,
     max_behind: u32, // maximum number of seconds a node can be behind before it is deemed "behind"
 ) -> Result<(), NodeError> {
-    let mut node =
-        endpoints::Client::connect(node_ep, token).await.map_err(NodeError::ConnectionError)?;
+    let mut node = v2::Client::new(node_ep).await.map_err(NodeError::ConnectionError)?;
     // if the cache is empty we seed it with all accounts at the last finalized
     // block. This will only happen the first time this function is successfully
     // invoked.
     if canonical_cache.is_empty() {
-        let info = node.get_consensus_status().await.context("Error querying consensus status.")?;
-        let accounts = node
-            .get_account_list(&info.last_finalized_block)
+        let accounts_response = node
+            .get_account_list(&v2::BlockIdentifier::LastFinal)
             .await
             .context("Error querying account list.")?;
+        let accounts = accounts_response.response;
         // this relies on the fact that get_account_list returns canonical addresses.
-        log::debug!("Initializing the address cache with {} accounts.", accounts.len());
-        for addr in accounts {
-            canonical_cache.insert(AccountAddressEq(addr));
-        }
+        // log::debug!("Initializing the address cache with {} accounts.",
+        // accounts.len());
+        let r = accounts
+            .try_fold(HashSet::new(), |mut cc, addr| async move {
+                let _ = cc.insert(AccountAddressEq(addr));
+                Ok(cc)
+            })
+            .await?;
+        *canonical_cache = r;
     }
-    let mut parallel = 1;
+    let mut stream = node.get_finalized_blocks_from(*height).await?;
+    let timeout = std::time::Duration::from_secs(max_behind.into());
     while !stop_flag.load(Ordering::Acquire) {
-        let mut handles = Vec::with_capacity(parallel as usize);
-        for h in u64::from(*height)..u64::from(*height) + parallel {
+        let (error, chunk) = stream
+            .next_chunk_timeout(max_parallel as usize, timeout)
+            .await
+            .map_err(|_| NodeError::Timeout)?;
+        let handles = chunk.into_iter().map(|fb| {
             let mut node = node.clone();
-            handles.push(async move {
-                let height: AbsoluteBlockHeight = h.into();
-                let blocks_at_height = node.get_blocks_at_height(height.into()).await?;
-                if blocks_at_height.len() != 1 {
-                    return Ok(Err(QueryFailure::NoBlocks));
-                }
-                let block = blocks_at_height[0];
-                let info = node.get_block_info(&block).await;
-                let info = match info {
-                    Ok(info) if !info.finalized => {
-                        return Ok(Err(QueryFailure::NotFinalized));
-                    }
-                    Ok(info) => info,
-                    Err(endpoints::QueryError::NotFound) => {
-                        return Ok(Err(QueryFailure::NotFound));
-                    }
-                    Err(endpoints::QueryError::RPCError(e)) => return Err(e.into()),
+            async move {
+                let mut events_node = node.clone();
+                let events = async {
+                    let v = events_node
+                        .get_block_transaction_events(&fb.block_hash.into())
+                        .await?
+                        .response
+                        .try_collect()
+                        .await?;
+                    Ok::<_, anyhow::Error>(v)
                 };
-                let summary = node.get_block_summary(&block).await?;
-                Ok::<_, anyhow::Error>(Ok((info, summary)))
-            });
-        }
-        let mut success = true;
-        for result in futures::future::join_all(handles).await {
-            match result? {
-                Ok((info, summary)) => {
-                    let (transaction_summaries, special_events) = match summary {
-                        concordium_rust_sdk::types::BlockSummary::V0 {
-                            data,
-                            ..
-                        } => (data.transaction_summaries, data.special_events),
-                        concordium_rust_sdk::types::BlockSummary::V1 {
-                            data,
-                            ..
-                        } => (data.transaction_summaries, data.special_events),
-                    };
-                    let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
-                    for summary in transaction_summaries {
-                        let affected_addresses = summary.affected_addresses();
-                        let mut addresses = Vec::with_capacity(affected_addresses.len());
-                        // resolve canonical addresses. This part is only needed because the index
-                        // is currently expected by "canonical address",
-                        // which is only possible to resolve by querying the node.
-                        let mut seen = HashSet::with_capacity(affected_addresses.len());
-                        for address in affected_addresses.into_iter() {
-                            if let Some(addr) = canonical_cache.get(address.as_ref()) {
-                                let addr = AccountAddress::from(*addr);
-                                if seen.insert(addr) {
-                                    addresses.push(addr);
-                                }
-                            } else {
-                                let ainfo = node
-                                    .get_account_info(address, &info.block_hash)
-                                    .await
-                                    .context("Error querying account info.")?;
-                                let addr = ainfo.account_address;
-                                if seen.insert(addr) {
-                                    log::debug!("Discovered new address {}", addr);
-                                    addresses.push(addr);
-                                    canonical_cache.insert(AccountAddressEq(addr));
-                                } else {
-                                    log::debug!("Canonical address {} already listed.", addr);
-                                }
-                            }
-                        }
-                        with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
-                            summary,
-                            addresses,
-                        })
-                    }
-                    if sender.send((info, with_addresses, special_events)).await.is_err() {
-                        log::warn!(
-                            "The database connection has been closed. Terminating node queries."
-                        );
-                        return Ok(());
-                    }
-                    *height = height.next();
-                }
-                Err(_) => {
-                    success = false;
-                    // if we failed one height we drop the rest since we likely failed those as
-                    // well. In any case we must do things in order.
-                    check_node_and_wait(&mut node, max_behind).await?;
-                    break;
-                }
+                let special = async {
+                    let v = node
+                        .get_block_special_events(&fb.block_hash.into())
+                        .await?
+                        .response
+                        .try_collect()
+                        .await?;
+                    Ok::<_, anyhow::Error>(v)
+                };
+                let (events, special) = futures::future::join(events, special).await;
+                let binfo = node.get_block_info(&fb.block_hash.into()).await?;
+                Ok::<
+                    (BlockInfo, Vec<BlockItemSummary>, Vec<SpecialTransactionOutcome>),
+                    anyhow::Error,
+                >((binfo.response, events?, special?))
             }
+        });
+        for result in futures::future::join_all(handles).await {
+            let (binfo, transaction_summaries, special_events) = result?;
+            let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
+            for summary in transaction_summaries {
+                let affected_addresses = summary.affected_addresses();
+                let mut addresses = Vec::with_capacity(affected_addresses.len());
+                // resolve canonical addresses. This part is only needed because the index
+                // is currently expected by "canonical address",
+                // which is only possible to resolve by querying the node.
+                let mut seen = HashSet::with_capacity(affected_addresses.len());
+                for address in affected_addresses.into_iter() {
+                    if let Some(addr) = canonical_cache.get(address.as_ref()) {
+                        let addr = AccountAddress::from(*addr);
+                        if seen.insert(addr) {
+                            addresses.push(addr);
+                        }
+                    } else {
+                        let ainfo = node
+                            .get_account_info(&address.into(), &binfo.block_hash.into())
+                            .await
+                            .context("Error querying account info.")?
+                            .response;
+                        let addr = ainfo.account_address;
+                        if seen.insert(addr) {
+                            log::debug!("Discovered new address {}", addr);
+                            addresses.push(addr);
+                            canonical_cache.insert(AccountAddressEq(addr));
+                        } else {
+                            log::debug!("Canonical address {} already listed.", addr);
+                        }
+                    }
+                }
+                with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
+                    summary,
+                    addresses,
+                })
+            }
+            if sender.send((binfo, with_addresses, special_events)).await.is_err() {
+                log::error!("The database connection has been closed. Terminating node queries.");
+                return Ok(());
+            }
+            *height = height.next();
         }
-        if success {
-            parallel = std::cmp::min(parallel + 1, max_parallel.into());
-        } else {
-            parallel = 1;
+        if error {
+            // we have processed the blocks we can, but further queries on the same stream
+            // will fail since the stream signalled an error.
+            return Err(NodeError::OtherError(anyhow::anyhow!("Finalized block stream dropped.")));
         }
     }
     Ok(())
@@ -708,7 +673,6 @@ async fn main() -> anyhow::Result<()> {
         log::info!("Attempting to use node {}", node_ep.uri());
         match use_node(
             node_ep,
-            &app.token,
             &sender,
             &mut height,
             app.num_parallel,
@@ -723,6 +687,15 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(NodeError::OtherError(e)) => {
                 log::warn!("Node query failed due to: {:#}. Will attempt another node.", e);
+            }
+            Err(NodeError::NetworkError(e)) => {
+                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+            }
+            Err(NodeError::QueryError(e)) => {
+                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+            }
+            Err(NodeError::Timeout) => {
+                log::warn!("Node too far behind. Will attempt another node.");
             }
             Ok(()) => break,
         }
