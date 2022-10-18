@@ -338,9 +338,6 @@ async fn use_node(
             .await
             .context("Error querying account list.")?;
         let accounts = accounts_response.response;
-        // this relies on the fact that get_account_list returns canonical addresses.
-        // log::debug!("Initializing the address cache with {} accounts.",
-        // accounts.len());
         let r = accounts
             .try_fold(HashSet::new(), |mut cc, addr| async move {
                 let _ = cc.insert(AccountAddressEq(addr));
@@ -359,31 +356,26 @@ async fn use_node(
         let handles = chunk.into_iter().map(|fb| {
             let mut node = node.clone();
             async move {
-                let mut events_node = node.clone();
-                let events = async {
-                    let v = events_node
-                        .get_block_transaction_events(&fb.block_hash.into())
-                        .await?
-                        .response
-                        .try_collect()
-                        .await?;
-                    Ok::<_, anyhow::Error>(v)
-                };
-                let special = async {
-                    let v = node
-                        .get_block_special_events(&fb.block_hash.into())
-                        .await?
-                        .response
-                        .try_collect()
-                        .await?;
-                    Ok::<_, anyhow::Error>(v)
-                };
-                let (events, special) = futures::future::join(events, special).await;
                 let binfo = node.get_block_info(&fb.block_hash.into()).await?;
+                let events = if binfo.response.transaction_count == 0 {
+                    Vec::new()
+                } else {
+                    node.get_block_transaction_events(&fb.block_hash.into())
+                        .await?
+                        .response
+                        .try_collect()
+                        .await?
+                };
+                let special = node
+                    .get_block_special_events(&fb.block_hash.into())
+                    .await?
+                    .response
+                    .try_collect()
+                    .await?;
                 Ok::<
                     (BlockInfo, Vec<BlockItemSummary>, Vec<SpecialTransactionOutcome>),
                     anyhow::Error,
-                >((binfo.response, events?, special?))
+                >((binfo.response, events, special))
             }
         });
         for result in futures::future::join_all(handles).await {
@@ -671,7 +663,8 @@ async fn main() -> anyhow::Result<()> {
         }
         // connect to the node.
         log::info!("Attempting to use node {}", node_ep.uri());
-        match use_node(
+
+        let node_result = use_node(
             node_ep,
             &sender,
             &mut height,
@@ -680,8 +673,9 @@ async fn main() -> anyhow::Result<()> {
             &mut canonical_cache,
             app.max_behind,
         )
-        .await
-        {
+        .await;
+
+        match node_result {
             Err(NodeError::ConnectionError(e)) => {
                 log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
             }
