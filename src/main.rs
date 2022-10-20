@@ -1,19 +1,21 @@
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
-    common::{types::Timestamp, SerdeSerialize},
+    cis0, cis2::{self, TokenAmount},
+    common::{self, types::Timestamp, SerdeSerialize},
     id::types::AccountAddress,
     postgres,
     postgres::DatabaseClient,
     types::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
-        SpecialTransactionOutcome,
+        ContractAddress, SpecialTransactionOutcome,
     },
     v2,
 };
 use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::HashSet,
+    convert::TryFrom,
     hash::Hash,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -146,6 +148,118 @@ async fn insert_transaction(
     Ok(())
 }
 
+/// Insert an account transaction.
+async fn insert_cis2(
+    tx: &DBTransaction<'_>,
+    block_hash: BlockHash,
+    block_time: Timestamp,
+    block_height: AbsoluteBlockHeight,
+    ts: &BlockItemSummaryWithCanonicalAddresses,
+) -> Result<(), postgres::Error> {
+    if let Some(effects) = get_cis2_events(&ts.summary) {
+        for (ca, events) in effects {
+            for event in events {
+                match event {
+                    cis2::Event::Transfer {
+                        token_id,
+                        amount,
+                        from,
+                        to,
+                    } => {
+                        if from != to && !amount.is_zero() {
+                            let statement = "INSERT INTO cis2_balances (index, subindex, address, \
+                                             token_id, balance)
+VALUES ($1, $2, $3, $4, CAST($5 AS TEXT) :: NUMERIC)
+ON CONFLICT (index, subindex, address, token_id)
+DO UPDATE SET balance = cis2_balances.balance + EXCLUDED.balance;
+";
+                            let to_addr_bytes = common::to_bytes(&to);
+                            let values = [
+                                &(ca.index as i64) as &(dyn ToSql + Sync),
+                                &(ca.subindex as i64),
+                                &&to_addr_bytes[..],
+                                &token_id.as_ref(),
+                                &amount.0.to_string(),
+                            ];
+                            tx.query_opt(statement, &values).await?;
+
+                            let statement = "UPDATE cis2_balances SET balance = balance - (CAST($5 AS TEXT) :: NUMERIC)
+WHERE index = $1 AND subindex = $2 AND address = $3 AND token_id = $4;
+";
+                            let from_addr_bytes = common::to_bytes(&from);
+                            let values = [
+                                &(ca.index as i64) as &(dyn ToSql + Sync),
+                                &(ca.subindex as i64),
+                                &&from_addr_bytes[..],
+                                &token_id.as_ref(),
+                                &amount.0.to_string(),
+                            ];
+                            tx.query_opt(statement, &values).await?;
+                        } // else nothing needs to be done, we are tracking the
+                          // current balances.
+                    }
+                    cis2::Event::Mint {
+                        token_id,
+                        amount,
+                        owner,
+                    } => {
+                        let statement = "INSERT INTO cis2_balances (index, subindex, address, \
+                                         token_id, balance)
+VALUES ($1, $2, $3, $4, CAST($5 AS TEXT):: NUMERIC)
+ON CONFLICT (index, subindex, address, token_id)
+DO UPDATE SET balance = cis2_balances.balance + EXCLUDED.balance;
+";
+                        let addr_bytes = common::to_bytes(&owner);
+                        let values = [
+                            &(ca.index as i64) as &(dyn ToSql + Sync),
+                            &(ca.subindex as i64),
+                            &&addr_bytes[..],
+                            &token_id.as_ref(),
+                            &amount.0.to_string(),
+                        ];
+                        tx.query_opt(statement, &values).await?;
+                    }
+                    cis2::Event::Burn {
+                        token_id,
+                        amount,
+                        owner,
+                    } => {
+                        let statement = "UPDATE cis2_balances SET balance = balance - (CAST($5 AS TEXT) :: NUMERIC)
+WHERE index = $1 AND subindex = $2 AND address = $3 AND token_id = $4;
+";
+                        let addr_bytes = common::to_bytes(&owner);
+                        let values = [
+                            &(ca.index as i64) as &(dyn ToSql + Sync),
+                            &(ca.subindex as i64),
+                            &&addr_bytes[..],
+                            &token_id.as_ref(),
+                            &amount.0.to_string(),
+                        ];
+                        tx.query_opt(statement, &values).await?;
+                    }
+                    cis2::Event::UpdateOperator {
+                        update,
+                        owner,
+                        operator,
+                    } => {
+                        log::warn!("Update operator");
+                    }
+                    cis2::Event::TokenMetadata {
+                        token_id,
+                        metadata_url,
+                    } => {
+                        log::warn!("Update metadata");
+                    }
+                    cis2::Event::Unknown => {
+                        log::warn!("Unknown");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Insert special outcomes.
 async fn insert_special(
     tx: &DBTransaction<'_>,
@@ -225,6 +339,7 @@ async fn insert_block(
     let db_tx = db.as_mut().transaction().await?;
     for transaction in item_summaries.iter() {
         insert_transaction(&db_tx, block_hash, block_time, block_height, transaction).await?;
+        insert_cis2(&db_tx, block_hash, block_time, block_height, transaction).await?;
     }
     for special in special_events.iter() {
         insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
@@ -258,9 +373,15 @@ async fn create_tables(db: &DatabaseClient) -> Result<(), postgres::Error> {
                       INT8 NOT NULL, summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY \
                       (index, subindex, id), CONSTRAINT cti_summary_fkey FOREIGN KEY(summary) \
                       REFERENCES summaries(id) ON DELETE RESTRICT ON UPDATE RESTRICT)";
+    let create_tokens_contracts = "CREATE TABLE IF NOT EXISTS cis2_balances(index INT8 NOT NULL, \
+                                   subindex INT8 NOT NULL, address BYTEA NOT NULL, token_id BYTEA \
+                                   NOT NULL, balance NUMERIC NOT NULL,
+         CONSTRAINT cis2_contracts_pkey PRIMARY KEY (index, subindex, address, token_id)
+         )";
     db.as_ref().batch_execute(create_summaries).await?;
     db.as_ref().batch_execute(create_ati).await?;
-    db.as_ref().batch_execute(create_cti).await
+    db.as_ref().batch_execute(create_cti).await?;
+    db.as_ref().batch_execute(create_tokens_contracts).await
 }
 
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
@@ -464,6 +585,42 @@ async fn try_reconnect(
         }
     }
     anyhow::bail!("The node was requested to stop.")
+}
+
+fn get_cis2_events<'a>(
+    bi: &'a BlockItemSummary,
+) -> Option<impl Iterator<Item = (ContractAddress, Vec<cis2::Event>)> + 'a> {
+    let log_iter = bi.contract_update_logs()?;
+    let ret = log_iter.flat_map(|(ca, logs)| {
+        match logs.iter().map(cis2::Event::try_from).collect::<Result<Vec<cis2::Event>, _>>() {
+            Ok(events) => Some((ca, events)),
+            Err(_) => None,
+        }
+    });
+    Some(ret)
+}
+
+async fn check_new_cis2(
+    client: &mut v2::Client,
+    bi: &BlockItemSummary,
+    block_hash: BlockHash,
+) -> anyhow::Result<bool> {
+    match bi.contract_init() {
+        Some(data) => {
+            let r = cis0::supports(
+                client,
+                &block_hash.into(),
+                data.address,
+                data.init_name.as_contract_name(),
+                cis0::StandardIdentifier::CIS2,
+            )
+            .await?;
+            Ok(r.response.is_support())
+        }
+        None => {
+            anyhow::bail!("Not a contract initialization.")
+        }
+    }
 }
 
 async fn write_to_db(
