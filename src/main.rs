@@ -11,7 +11,7 @@ use concordium_rust_sdk::{
     },
     v2,
 };
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::HashSet,
     hash::Hash,
@@ -346,16 +346,17 @@ async fn use_node(
             .await?;
         *canonical_cache = r;
     }
-    let mut stream = node.get_finalized_blocks_from(*height).await?;
+    let mut finalized_blocks = node.get_finalized_blocks_from(*height).await?;
     let timeout = std::time::Duration::from_secs(max_behind.into());
     while !stop_flag.load(Ordering::Acquire) {
-        let (error, chunk) = stream
+        let (error, chunk) = finalized_blocks
             .next_chunk_timeout(max_parallel as usize, timeout)
             .await
             .map_err(|_| NodeError::Timeout)?;
-        let handles = chunk.into_iter().map(|fb| {
+        let mut futures = futures::stream::FuturesOrdered::new();
+        for fb in chunk {
             let mut node = node.clone();
-            async move {
+            futures.push_back(async move {
                 let binfo = node.get_block_info(&fb.block_hash.into()).await?;
                 let events = if binfo.response.transaction_count == 0 {
                     Vec::new()
@@ -376,9 +377,9 @@ async fn use_node(
                     (BlockInfo, Vec<BlockItemSummary>, Vec<SpecialTransactionOutcome>),
                     anyhow::Error,
                 >((binfo.response, events, special))
-            }
-        });
-        for result in futures::future::join_all(handles).await {
+            });
+        }
+        while let Some(result) = futures.next().await {
             let (binfo, transaction_summaries, special_events) = result?;
             let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
             for summary in transaction_summaries {
