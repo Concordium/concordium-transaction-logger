@@ -104,20 +104,33 @@ struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) addresses: Vec<AccountAddress>,
 }
 
+/// Prepared statements for all insertions. Prepared statements are
+/// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
+    /// Insert into the summary table.
     insert_summary:             tokio_postgres::Statement,
+    /// Insert into the account transaction index table.
     insert_ati:                 tokio_postgres::Statement,
+    /// Insert into the contract transaction index table.
     insert_cti:                 tokio_postgres::Statement,
+    /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
+    /// Decrease the total supply of a given token.
     cis2_decrease_total_supply: tokio_postgres::Statement,
 }
 
+/// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 struct DBConn {
     client:   DatabaseClient,
     prepared: PreparedStatements,
 }
 
 impl DBConn {
+    /// Create a new database connection. If the second argument is `true` then
+    /// the table creation script will be run (see the file
+    /// `resources/schema.sql`). This script is in principle idempotent so
+    /// running it twice should be safe, but it is also needless,
+    /// so this should only be requested on a first connection on startup.
     async fn create(config: &postgres::Config, try_create_tables: bool) -> anyhow::Result<Self> {
         let mut client = DatabaseClient::create(config.clone(), postgres::NoTls).await?;
 
@@ -173,6 +186,7 @@ RETURNING id",
 }
 
 impl PreparedStatements {
+    /// Insert a new summary row, containing a single transaction summary.
     async fn insert_summary<'a, 'b, 'c>(
         &'a self,
         tx: &DBTransaction<'b>,
@@ -283,7 +297,7 @@ impl PreparedStatements {
     }
 
     /// Increase the total supply of the given token, and return the primary key
-    /// in the database.
+    /// in the `cis2_tokens` table for that token.
     async fn cis2_increase_total_supply<'a, 'b>(
         &'a self,
         tx: &DBTransaction<'b>,
@@ -303,7 +317,7 @@ impl PreparedStatements {
     }
 
     /// Decrease the total supply of the given token, and return the primary key
-    /// in the database.
+    /// in the `cis2_tokens` table for that token.
     async fn cis2_decrease_total_supply<'a, 'b>(
         &'a self,
         tx: &DBTransaction<'b>,
@@ -322,13 +336,14 @@ impl PreparedStatements {
         Ok(id)
     }
 
-    /// Insert an account transaction.
+    /// Check whether the summary contains any CIS2 events, and if so,
+    /// parse them and insert them into the `cis2_tokens` table.
     async fn insert_cis2(
         &self,
         tx: &DBTransaction<'_>,
-        ts: &BlockItemSummaryWithCanonicalAddresses,
+        ts: &BlockItemSummary,
     ) -> Result<(), postgres::Error> {
-        if let Some(effects) = get_cis2_events(&ts.summary) {
+        if let Some(effects) = get_cis2_events(ts) {
             for (ca, events) in effects {
                 for event in events {
                     match event {
@@ -397,7 +412,7 @@ async fn insert_block(
         prepared
             .insert_transaction(&db_tx, block_hash, block_time, block_height, transaction)
             .await?;
-        prepared.insert_cis2(&db_tx, transaction).await?;
+        prepared.insert_cis2(&db_tx, &transaction.summary).await?;
     }
     for special in special_events.iter() {
         prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
