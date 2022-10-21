@@ -389,7 +389,7 @@ async fn insert_block(
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
-) -> Result<(), postgres::Error> {
+) -> Result<chrono::Duration, postgres::Error> {
     let start = chrono::Utc::now();
     let db_tx = db.client.as_mut().transaction().await?;
     let prepared = &db.prepared;
@@ -402,15 +402,9 @@ async fn insert_block(
     for special in special_events.iter() {
         prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
     }
-    let mid = chrono::Utc::now().signed_duration_since(start);
     db_tx.commit().await?;
     let end = chrono::Utc::now().signed_duration_since(start);
-    log::info!(
-        "Took {}us ({})us to process block.",
-        end.num_microseconds().unwrap(),
-        mid.num_microseconds().unwrap()
-    );
-    Ok(())
+    Ok(end)
 }
 
 async fn get_last_block_height(
@@ -666,7 +660,7 @@ async fn write_to_db(
             receiver.recv().await
         };
         if let Some((bi, item_summaries, special_events)) = next_item {
-            if let Err(e) = insert_block(
+            match insert_block(
                 &mut db,
                 bi.block_hash,
                 (bi.block_slot_time.timestamp_millis() as u64).into(),
@@ -676,51 +670,60 @@ async fn write_to_db(
             )
             .await
             {
-                successive_errors += 1;
-                // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
-                // The reason for the min is that we bound the time between reconnects.
-                let delay = std::time::Duration::from_millis(
-                    500 * (1 << std::cmp::min(successive_errors, 8)),
-                );
-                log::error!(
-                    "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
-                    e,
-                    delay.as_millis()
-                );
-                tokio::time::sleep(delay).await;
-                let new_db = match try_reconnect(&config, &stop_flag, false).await {
-                    Ok(db) => db,
-                    Err(e) => {
-                        receiver.close();
-                        return Err(e);
-                    }
-                };
-                // and drop the old database.
-                let old_db = std::mem::replace(&mut db, new_db);
-                match old_db.client.stop().await {
-                    Ok(v) => {
-                        if let Err(e) = v {
-                            log::warn!(
-                                "Could not correctly stop the old database connection due to: {}.",
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        if e.is_panic() {
-                            log::warn!(
-                                "Could not correctly stop the old database connection. The \
-                                 connection thread panicked."
-                            );
-                        } else {
-                            log::warn!("Could not correctly stop the old database connection.");
-                        }
-                    }
+                Ok(time) => {
+                    successive_errors = 0;
+                    log::info!(
+                        "Processed block {} at height {} in {}ms.",
+                        bi.block_hash,
+                        bi.block_height,
+                        time.num_milliseconds()
+                    );
                 }
-                retry = Some((bi, item_summaries, special_events));
-            } else {
-                successive_errors = 0;
-                log::info!("Processed block {} at height {}.", bi.block_hash, bi.block_height);
+                Err(e) => {
+                    successive_errors += 1;
+                    // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
+                    // The reason for the min is that we bound the time between reconnects.
+                    let delay = std::time::Duration::from_millis(
+                        500 * (1 << std::cmp::min(successive_errors, 8)),
+                    );
+                    log::error!(
+                        "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
+                        e,
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    let new_db = match try_reconnect(&config, &stop_flag, false).await {
+                        Ok(db) => db,
+                        Err(e) => {
+                            receiver.close();
+                            return Err(e);
+                        }
+                    };
+                    // and drop the old database.
+                    let old_db = std::mem::replace(&mut db, new_db);
+                    match old_db.client.stop().await {
+                        Ok(v) => {
+                            if let Err(e) = v {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection due to: \
+                                     {}.",
+                                    e
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if e.is_panic() {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection. The \
+                                     connection thread panicked."
+                                );
+                            } else {
+                                log::warn!("Could not correctly stop the old database connection.");
+                            }
+                        }
+                    }
+                    retry = Some((bi, item_summaries, special_events));
+                }
             }
         } else {
             break;
