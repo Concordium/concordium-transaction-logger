@@ -55,18 +55,18 @@ logger at the moment creates an index of transactions by affected account and
 smart contract. This can be used for monitoring incoming transactions on an
 account. Only finalized transactions are logged.
 
-The database must exist before the logger starts.  If correct tables exist in the database then they will be used, otherwise the following will be executed upon startup
-```sql
-CREATE TABLE summaries(id SERIAL8 PRIMARY KEY UNIQUE, block BYTEA NOT NULL, timestamp INT8 NOT NULL, height INT8 NOT NULL, summary JSONB NOT NULL);
-CREATE TABLE ati(id SERIAL8, account BYTEA NOT NULL, summary INT8 NOT NULL, CONSTRAINT ati_pkey PRIMARY KEY (account, id), CONSTRAINT ati_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE RESTRICT  ON UPDATE RESTRICT);
-CREATE TABLE cti(id SERIAL8, index INT8 NOT NULL,subindex INT8 NOT NULL,summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY (index, subindex, id), CONSTRAINT cti_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE RESTRICT  ON UPDATE RESTRICT);
-```
+The database must exist before the logger starts.
 
-which creates three tables, `ati`, `cti`, and `summaries`. The `ati` and `cti`
-stand for **a**ccount, respectively **c**ontract, **t**ransaction **i**ndex.
-They contain an index so that a transaction affecting a given contract or
-account can be quickly looked up. The outcome of each transaction is in the
-`summaries` table.
+If correct tables exist in the database then they will be used, otherwise the
+[schema.sql](./resources/schema.sql) script will be executed to create the
+tables and indices that are required.
+
+There are two sets of tables. The first three tables, `ati`, `cti`, and
+`summaries`, contain an index of transactions by account and contract address.
+The `ati` and `cti` stand for **a**ccount, respectively **c**ontract,
+**t**ransaction **i**ndex. They contain an index so that a transaction affecting
+a given contract or account can be quickly looked up. The outcome of each
+transaction is in the `summaries` table.
 
 The summary that is stored in the `summary` column of the `summaries` table is stored as a JSON value. The contents is either of the form
 ```json
@@ -81,6 +81,9 @@ where `...` is a transaction outcome in the same format as it appears in block s
 }
 ```
 where `...` is a special transaction outcome in the same format as it appears in block summaries.
+
+The second set is the table of CIS2 tokens containing a list of all tokens that
+were discovered, together with their total supply.
 
 ## Account transaction index
 
