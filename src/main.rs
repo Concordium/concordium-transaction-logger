@@ -1,19 +1,21 @@
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
+    cis2::{self, TokenAmount, TokenId},
     common::{types::Timestamp, SerdeSerialize},
     id::types::AccountAddress,
     postgres,
     postgres::DatabaseClient,
     types::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
-        SpecialTransactionOutcome,
+        ContractAddress, SpecialTransactionOutcome,
     },
     v2,
 };
 use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::HashSet,
+    convert::TryFrom,
     hash::Hash,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -95,118 +97,6 @@ pub struct SummaryRow<'a> {
     pub summary:      BorrowedDatabaseSummaryEntry<'a>,
 }
 
-async fn insert_summary<'a, 'b>(
-    tx: &DBTransaction<'a>,
-    summary: &SummaryRow<'b>,
-) -> Result<i64, postgres::Error> {
-    let statement = "INSERT INTO summaries (block, timestamp, height, summary) VALUES ($1, $2, \
-                     $3, $4) RETURNING id";
-    let values = [
-        &summary.block_hash.as_ref() as &(dyn ToSql + Sync),
-        &(summary.block_time.millis as i64) as &(dyn ToSql + Sync),
-        &(summary.block_height.height as i64) as &(dyn ToSql + Sync),
-        &Json(&summary.summary) as &(dyn ToSql + Sync),
-    ];
-    let res = tx.query_one(statement, &values).await?;
-    let id = res.try_get::<_, i64>(0)?;
-    Ok(id)
-}
-
-/// Insert an account transaction.
-async fn insert_transaction(
-    tx: &DBTransaction<'_>,
-    block_hash: BlockHash,
-    block_time: Timestamp,
-    block_height: AbsoluteBlockHeight,
-    ts: &BlockItemSummaryWithCanonicalAddresses,
-) -> Result<(), postgres::Error> {
-    let affected_addresses = &ts.addresses;
-    let summary_row = SummaryRow {
-        block_hash,
-        block_time,
-        block_height,
-        summary: BorrowedDatabaseSummaryEntry::BlockItem(&ts.summary),
-    };
-    // TODO: Use prepared statement for efficiency.
-    let id = insert_summary(tx, &summary_row).await?;
-    let statement = "INSERT INTO ati (account, summary) VALUES ($1, $2)";
-    for affected in affected_addresses.iter() {
-        let addr_bytes: &[u8; 32] = affected.as_ref();
-        let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
-        tx.query_opt(statement, &values).await?;
-    }
-    // insert contracts
-    let statement_contract = "INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)";
-    for affected in ts.summary.affected_contracts() {
-        let index = affected.index;
-        let subindex = affected.subindex;
-        let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
-        tx.query_opt(statement_contract, &values).await?;
-    }
-    Ok(())
-}
-
-/// Insert special outcomes.
-async fn insert_special(
-    tx: &DBTransaction<'_>,
-    block_hash: BlockHash,
-    block_time: Timestamp,
-    block_height: AbsoluteBlockHeight,
-    so: &SpecialTransactionOutcome,
-) -> Result<(), postgres::Error> {
-    // these are canonical addresses so there is no need to resolve anything
-    // additional.
-    let affected_addresses = match so {
-        SpecialTransactionOutcome::BakingRewards {
-            baker_rewards,
-            ..
-        } => baker_rewards.keys().copied().collect::<Vec<_>>(),
-        SpecialTransactionOutcome::Mint {
-            foundation_account,
-            ..
-        } => vec![*foundation_account],
-        SpecialTransactionOutcome::FinalizationRewards {
-            finalization_rewards,
-            ..
-        } => finalization_rewards.keys().copied().collect::<Vec<_>>(),
-        SpecialTransactionOutcome::BlockReward {
-            baker,
-            foundation_account,
-            ..
-        } => vec![*baker, *foundation_account],
-        SpecialTransactionOutcome::PaydayFoundationReward {
-            foundation_account,
-            ..
-        } => vec![*foundation_account],
-        SpecialTransactionOutcome::PaydayAccountReward {
-            account,
-            ..
-        } => vec![*account],
-        // the following two are only administrative events, they don't transfer to the account,
-        // only to the virtual account.
-        SpecialTransactionOutcome::BlockAccrueReward {
-            ..
-        } => Vec::new(),
-        SpecialTransactionOutcome::PaydayPoolReward {
-            ..
-        } => Vec::new(),
-    };
-    let summary_row = SummaryRow {
-        block_hash,
-        block_time,
-        block_height,
-        summary: BorrowedDatabaseSummaryEntry::ProtocolEvent(so),
-    };
-    let id = insert_summary(tx, &summary_row).await?;
-    let statement = "INSERT INTO ati (account, summary) VALUES ($1, $2)";
-    for affected in affected_addresses.iter() {
-        let addr_bytes: &[u8; 32] = affected.as_ref();
-        let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
-        tx.query_opt(statement, &values).await?;
-    }
-    Ok(())
-}
-
 struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) summary:   BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
@@ -214,23 +104,322 @@ struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) addresses: Vec<AccountAddress>,
 }
 
+/// Prepared statements for all insertions. Prepared statements are
+/// per-connection so we have to re-create them each time we reconnect.
+struct PreparedStatements {
+    /// Insert into the summary table.
+    insert_summary:             tokio_postgres::Statement,
+    /// Insert into the account transaction index table.
+    insert_ati:                 tokio_postgres::Statement,
+    /// Insert into the contract transaction index table.
+    insert_cti:                 tokio_postgres::Statement,
+    /// Increase the total supply of a given token.
+    cis2_increase_total_supply: tokio_postgres::Statement,
+    /// Decrease the total supply of a given token.
+    cis2_decrease_total_supply: tokio_postgres::Statement,
+}
+
+/// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
+struct DBConn {
+    client:   DatabaseClient,
+    prepared: PreparedStatements,
+}
+
+impl DBConn {
+    /// Create a new database connection. If the second argument is `true` then
+    /// the table creation script will be run (see the file
+    /// `resources/schema.sql`). This script is in principle idempotent so
+    /// running it twice should be safe, but it is also needless,
+    /// so this should only be requested on a first connection on startup.
+    async fn create(config: &postgres::Config, try_create_tables: bool) -> anyhow::Result<Self> {
+        let mut client = DatabaseClient::create(config.clone(), postgres::NoTls).await?;
+
+        if try_create_tables {
+            let create = include_str!("../resources/schema.sql");
+            client.as_ref().batch_execute(create).await?
+        }
+
+        let insert_ati =
+            client.as_mut().prepare("INSERT INTO ati (account, summary) VALUES ($1, $2)").await?;
+        let insert_cti = client
+            .as_mut()
+            .prepare("INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)")
+            .await?;
+        let insert_summary = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO summaries (block, timestamp, height, summary) VALUES ($1, $2, $3, \
+                 $4) RETURNING id",
+            )
+            .await?;
+        let cis2_increase_total_supply = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
+VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+ON CONFLICT (index, subindex, token_id)
+DO UPDATE SET total_supply = cis2_tokens.total_supply + EXCLUDED.total_supply
+RETURNING id",
+            )
+            .await?;
+        let cis2_decrease_total_supply = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
+VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+ON CONFLICT (index, subindex, token_id)
+DO UPDATE SET total_supply = cis2_tokens.total_supply - EXCLUDED.total_supply
+RETURNING id",
+            )
+            .await?;
+        Ok(Self {
+            client,
+            prepared: PreparedStatements {
+                insert_summary,
+                insert_ati,
+                insert_cti,
+                cis2_increase_total_supply,
+                cis2_decrease_total_supply,
+            },
+        })
+    }
+}
+
+impl PreparedStatements {
+    /// Insert a new summary row, containing a single transaction summary.
+    async fn insert_summary<'a, 'b, 'c>(
+        &'a self,
+        tx: &DBTransaction<'b>,
+        summary: &SummaryRow<'c>,
+    ) -> Result<i64, postgres::Error> {
+        let values = [
+            &summary.block_hash.as_ref() as &(dyn ToSql + Sync),
+            &(summary.block_time.millis as i64) as &(dyn ToSql + Sync),
+            &(summary.block_height.height as i64) as &(dyn ToSql + Sync),
+            &Json(&summary.summary) as &(dyn ToSql + Sync),
+        ];
+        let res = tx.query_one(&self.insert_summary, &values).await?;
+        let id = res.try_get::<_, i64>(0)?;
+        Ok(id)
+    }
+
+    /// Insert an account transaction.
+    async fn insert_transaction<'a, 'b>(
+        &'a self,
+        tx: &DBTransaction<'b>,
+        block_hash: BlockHash,
+        block_time: Timestamp,
+        block_height: AbsoluteBlockHeight,
+        ts: &BlockItemSummaryWithCanonicalAddresses,
+    ) -> Result<(), postgres::Error> {
+        let affected_addresses = &ts.addresses;
+        let summary_row = SummaryRow {
+            block_hash,
+            block_time,
+            block_height,
+            summary: BorrowedDatabaseSummaryEntry::BlockItem(&ts.summary),
+        };
+        let id = self.insert_summary(tx, &summary_row).await?;
+        for affected in affected_addresses.iter() {
+            let addr_bytes: &[u8; 32] = affected.as_ref();
+            let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            tx.query_opt(&self.insert_ati, &values).await?;
+        }
+        // insert contracts
+        for affected in ts.summary.affected_contracts() {
+            let index = affected.index;
+            let subindex = affected.subindex;
+            let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
+            tx.query_opt(&self.insert_cti, &values).await?;
+        }
+        Ok(())
+    }
+
+    /// Insert special outcomes.
+    async fn insert_special<'a, 'b>(
+        &'a self,
+        tx: &DBTransaction<'b>,
+        block_hash: BlockHash,
+        block_time: Timestamp,
+        block_height: AbsoluteBlockHeight,
+        so: &SpecialTransactionOutcome,
+    ) -> Result<(), postgres::Error> {
+        // these are canonical addresses so there is no need to resolve anything
+        // additional.
+        let affected_addresses = match so {
+            SpecialTransactionOutcome::BakingRewards {
+                baker_rewards,
+                ..
+            } => baker_rewards.keys().copied().collect::<Vec<_>>(),
+            SpecialTransactionOutcome::Mint {
+                foundation_account,
+                ..
+            } => vec![*foundation_account],
+            SpecialTransactionOutcome::FinalizationRewards {
+                finalization_rewards,
+                ..
+            } => finalization_rewards.keys().copied().collect::<Vec<_>>(),
+            SpecialTransactionOutcome::BlockReward {
+                baker,
+                foundation_account,
+                ..
+            } => vec![*baker, *foundation_account],
+            SpecialTransactionOutcome::PaydayFoundationReward {
+                foundation_account,
+                ..
+            } => vec![*foundation_account],
+            SpecialTransactionOutcome::PaydayAccountReward {
+                account,
+                ..
+            } => vec![*account],
+            // the following two are only administrative events, they don't transfer to the account,
+            // only to the virtual account.
+            SpecialTransactionOutcome::BlockAccrueReward {
+                ..
+            } => Vec::new(),
+            SpecialTransactionOutcome::PaydayPoolReward {
+                ..
+            } => Vec::new(),
+        };
+        let summary_row = SummaryRow {
+            block_hash,
+            block_time,
+            block_height,
+            summary: BorrowedDatabaseSummaryEntry::ProtocolEvent(so),
+        };
+        let id = self.insert_summary(tx, &summary_row).await?;
+        for affected in affected_addresses.iter() {
+            let addr_bytes: &[u8; 32] = affected.as_ref();
+            let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            tx.query_opt(&self.insert_ati, &values).await?;
+        }
+        Ok(())
+    }
+
+    /// Increase the total supply of the given token, and return the primary key
+    /// in the `cis2_tokens` table for that token.
+    async fn cis2_increase_total_supply<'a, 'b>(
+        &'a self,
+        tx: &DBTransaction<'b>,
+        ca: ContractAddress,
+        token_id: &TokenId,
+        amount: &TokenAmount,
+    ) -> Result<i64, postgres::Error> {
+        let values = [
+            &(ca.index as i64) as &(dyn ToSql + Sync),
+            &(ca.subindex as i64),
+            &token_id.as_ref(),
+            &amount.0.to_string(),
+        ];
+        let id = tx.query_one(&self.cis2_increase_total_supply, &values).await?;
+        let id = id.try_get::<_, i64>(0)?;
+        Ok(id)
+    }
+
+    /// Decrease the total supply of the given token, and return the primary key
+    /// in the `cis2_tokens` table for that token.
+    async fn cis2_decrease_total_supply<'a, 'b>(
+        &'a self,
+        tx: &DBTransaction<'b>,
+        ca: ContractAddress,
+        token_id: &TokenId,
+        amount: &TokenAmount,
+    ) -> Result<i64, postgres::Error> {
+        let values = [
+            &(ca.index as i64) as &(dyn ToSql + Sync),
+            &(ca.subindex as i64),
+            &token_id.as_ref(),
+            &amount.0.to_string(),
+        ];
+        let id = tx.query_one(&self.cis2_decrease_total_supply, &values).await?;
+        let id = id.try_get::<_, i64>(0)?;
+        Ok(id)
+    }
+
+    /// Check whether the summary contains any CIS2 events, and if so,
+    /// parse them and insert them into the `cis2_tokens` table.
+    async fn insert_cis2(
+        &self,
+        tx: &DBTransaction<'_>,
+        ts: &BlockItemSummary,
+    ) -> Result<(), postgres::Error> {
+        if let Some(effects) = get_cis2_events(ts) {
+            for (ca, events) in effects {
+                for event in events {
+                    match event {
+                        cis2::Event::Transfer {
+                            ..
+                        } => {
+                            // do nothing, tokens are not created here.
+                        }
+                        cis2::Event::Mint {
+                            ref token_id,
+                            ref amount,
+                            ..
+                        } => {
+                            self.cis2_increase_total_supply(tx, ca, token_id, amount).await?;
+                        }
+                        cis2::Event::Burn {
+                            ref token_id,
+                            ref amount,
+                            ..
+                        } => {
+                            self.cis2_decrease_total_supply(tx, ca, token_id, amount).await?;
+                        }
+                        cis2::Event::UpdateOperator {
+                            ..
+                        } => {
+                            // do nothing, updating operators does not change
+                            // token suply
+                        }
+                        cis2::Event::TokenMetadata {
+                            ..
+                        } => {
+                            // do nothing, updating token metadata does not
+                            // change token supply.
+                        }
+                        cis2::Event::Unknown => {
+                            // do nothing, not a CIS2 event
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl AsRef<DatabaseClient> for DBConn {
+    fn as_ref(&self) -> &DatabaseClient { &self.client }
+}
+
+impl AsMut<DatabaseClient> for DBConn {
+    fn as_mut(&mut self) -> &mut DatabaseClient { &mut self.client }
+}
+
 async fn insert_block(
-    db: &mut DatabaseClient,
+    db: &mut DBConn,
     block_hash: BlockHash,
     block_time: Timestamp,
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
-) -> Result<(), postgres::Error> {
-    let db_tx = db.as_mut().transaction().await?;
+) -> Result<chrono::Duration, postgres::Error> {
+    let start = chrono::Utc::now();
+    let db_tx = db.client.as_mut().transaction().await?;
+    let prepared = &db.prepared;
     for transaction in item_summaries.iter() {
-        insert_transaction(&db_tx, block_hash, block_time, block_height, transaction).await?;
+        prepared
+            .insert_transaction(&db_tx, block_hash, block_time, block_height, transaction)
+            .await?;
+        prepared.insert_cis2(&db_tx, &transaction.summary).await?;
     }
     for special in special_events.iter() {
-        insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
+        prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
     }
     db_tx.commit().await?;
-    Ok(())
+    let end = chrono::Utc::now().signed_duration_since(start);
+    Ok(end)
 }
 
 async fn get_last_block_height(
@@ -244,23 +433,6 @@ async fn get_last_block_height(
     } else {
         Ok(None)
     }
-}
-
-async fn create_tables(db: &DatabaseClient) -> Result<(), postgres::Error> {
-    let create_summaries = "CREATE TABLE IF NOT EXISTS summaries(id SERIAL8 PRIMARY KEY UNIQUE, \
-                            block BYTEA NOT NULL, timestamp INT8 NOT NULL, height INT8 NOT NULL, \
-                            summary JSONB NOT NULL)";
-    let create_ati = "CREATE TABLE IF NOT EXISTS ati(id SERIAL8, account BYTEA NOT NULL, summary \
-                      INT8 NOT NULL, CONSTRAINT ati_pkey PRIMARY KEY (account, id), CONSTRAINT \
-                      ati_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE \
-                      RESTRICT  ON UPDATE RESTRICT)";
-    let create_cti = "CREATE TABLE IF NOT EXISTS cti(id SERIAL8, index INT8 NOT NULL, subindex \
-                      INT8 NOT NULL, summary INT8 NOT NULL, CONSTRAINT cti_pkey PRIMARY KEY \
-                      (index, subindex, id), CONSTRAINT cti_summary_fkey FOREIGN KEY(summary) \
-                      REFERENCES summaries(id) ON DELETE RESTRICT ON UPDATE RESTRICT)";
-    db.as_ref().batch_execute(create_summaries).await?;
-    db.as_ref().batch_execute(create_ati).await?;
-    db.as_ref().batch_execute(create_cti).await
 }
 
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
@@ -436,10 +608,11 @@ async fn use_node(
 async fn try_reconnect(
     config: &postgres::Config,
     stop_flag: &AtomicBool,
-) -> anyhow::Result<DatabaseClient> {
+    create_tables: bool,
+) -> anyhow::Result<DBConn> {
     let mut i = 1;
     while !stop_flag.load(Ordering::Acquire) {
-        match DatabaseClient::create(config.clone(), postgres::NoTls).await {
+        match DBConn::create(config, create_tables).await {
             Ok(c) => return Ok(c),
             Err(e) if i < MAX_CONNECT_ATTEMPTS => {
                 let delay = std::time::Duration::from_millis(500 * (1 << i));
@@ -459,11 +632,24 @@ async fn try_reconnect(
                     MAX_CONNECT_ATTEMPTS,
                     e
                 );
-                return Err(e.into());
+                return Err(e);
             }
         }
     }
     anyhow::bail!("The node was requested to stop.")
+}
+
+fn get_cis2_events(
+    bi: &BlockItemSummary,
+) -> Option<impl Iterator<Item = (ContractAddress, Vec<cis2::Event>)> + '_> {
+    let log_iter = bi.contract_update_logs()?;
+    let ret = log_iter.flat_map(|(ca, logs)| {
+        match logs.iter().map(cis2::Event::try_from).collect::<Result<Vec<cis2::Event>, _>>() {
+            Ok(events) => Some((ca, events)),
+            Err(_) => None,
+        }
+    });
+    Some(ret)
 }
 
 async fn write_to_db(
@@ -472,10 +658,9 @@ async fn write_to_db(
     mut receiver: tokio::sync::mpsc::Receiver<TransactionLogData>,
     stop_flag: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
-    let mut db = try_reconnect(&config, &stop_flag).await?;
-    create_tables(&db).await?;
+    let mut db = try_reconnect(&config, &stop_flag, true).await?;
 
-    let height = get_last_block_height(&db).await?.map_or(0.into(), |h| h.next());
+    let height = get_last_block_height(&db.client).await?.map_or(0.into(), |h| h.next());
     height_sender
         .send(height)
         .map_err(|_| anyhow::anyhow!("Cannot send height to the node worker."))?;
@@ -490,7 +675,7 @@ async fn write_to_db(
             receiver.recv().await
         };
         if let Some((bi, item_summaries, special_events)) = next_item {
-            if let Err(e) = insert_block(
+            match insert_block(
                 &mut db,
                 bi.block_hash,
                 (bi.block_slot_time.timestamp_millis() as u64).into(),
@@ -500,51 +685,60 @@ async fn write_to_db(
             )
             .await
             {
-                successive_errors += 1;
-                // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
-                // The reason for the min is that we bound the time between reconnects.
-                let delay = std::time::Duration::from_millis(
-                    500 * (1 << std::cmp::min(successive_errors, 8)),
-                );
-                log::error!(
-                    "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
-                    e,
-                    delay.as_millis()
-                );
-                tokio::time::sleep(delay).await;
-                let new_db = match try_reconnect(&config, &stop_flag).await {
-                    Ok(db) => db,
-                    Err(e) => {
-                        receiver.close();
-                        return Err(e);
-                    }
-                };
-                // and drop the old database.
-                let old_db = std::mem::replace(&mut db, new_db);
-                match old_db.stop().await {
-                    Ok(v) => {
-                        if let Err(e) = v {
-                            log::warn!(
-                                "Could not correctly stop the old database connection due to: {}.",
-                                e
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        if e.is_panic() {
-                            log::warn!(
-                                "Could not correctly stop the old database connection. The \
-                                 connection thread panicked."
-                            );
-                        } else {
-                            log::warn!("Could not correctly stop the old database connection.");
-                        }
-                    }
+                Ok(time) => {
+                    successive_errors = 0;
+                    log::info!(
+                        "Processed block {} at height {} in {}ms.",
+                        bi.block_hash,
+                        bi.block_height,
+                        time.num_milliseconds()
+                    );
                 }
-                retry = Some((bi, item_summaries, special_events));
-            } else {
-                successive_errors = 0;
-                log::info!("Processed block {} at height {}.", bi.block_hash, bi.block_height);
+                Err(e) => {
+                    successive_errors += 1;
+                    // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
+                    // The reason for the min is that we bound the time between reconnects.
+                    let delay = std::time::Duration::from_millis(
+                        500 * (1 << std::cmp::min(successive_errors, 8)),
+                    );
+                    log::error!(
+                        "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
+                        e,
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    let new_db = match try_reconnect(&config, &stop_flag, false).await {
+                        Ok(db) => db,
+                        Err(e) => {
+                            receiver.close();
+                            return Err(e);
+                        }
+                    };
+                    // and drop the old database.
+                    let old_db = std::mem::replace(&mut db, new_db);
+                    match old_db.client.stop().await {
+                        Ok(v) => {
+                            if let Err(e) = v {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection due to: \
+                                     {}.",
+                                    e
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if e.is_panic() {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection. The \
+                                     connection thread panicked."
+                                );
+                            } else {
+                                log::warn!("Could not correctly stop the old database connection.");
+                            }
+                        }
+                    }
+                    retry = Some((bi, item_summaries, special_events));
+                }
             }
         } else {
             break;
@@ -552,7 +746,7 @@ async fn write_to_db(
     }
     // stop the database connection.
     receiver.close();
-    db.stop().await??;
+    db.client.stop().await??;
     Ok(())
 }
 
