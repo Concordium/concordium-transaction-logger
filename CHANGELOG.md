@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.0
+
+- Add an extra table to record the list of CIS2 tokens on each smart contract.
+
 ## 0.5.0
 
 - Use Rust SDK V2.
