@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.0
+
+- Add support for protocol 5.
+
 ## 0.6.0
 
 - Add an extra table to record the list of CIS2 tokens on each smart contract.

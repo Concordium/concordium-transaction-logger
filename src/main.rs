@@ -529,18 +529,18 @@ async fn use_node(
         for fb in chunk {
             let mut node = node.clone();
             futures.push_back(async move {
-                let binfo = node.get_block_info(&fb.block_hash.into()).await?;
+                let binfo = node.get_block_info(fb.block_hash).await?;
                 let events = if binfo.response.transaction_count == 0 {
                     Vec::new()
                 } else {
-                    node.get_block_transaction_events(&fb.block_hash.into())
+                    node.get_block_transaction_events(fb.block_hash)
                         .await?
                         .response
                         .try_collect()
                         .await?
                 };
                 let special = node
-                    .get_block_special_events(&fb.block_hash.into())
+                    .get_block_special_events(fb.block_hash)
                     .await?
                     .response
                     .try_collect()
@@ -569,7 +569,7 @@ async fn use_node(
                         }
                     } else {
                         let ainfo = node
-                            .get_account_info(&address.into(), &binfo.block_hash.into())
+                            .get_account_info(&address.into(), binfo.block_hash)
                             .await
                             .context("Error querying account info.")?
                             .response;
