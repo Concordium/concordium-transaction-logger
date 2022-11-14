@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.7.2
+
+- Fix bug in CIS2 event parsing. Events emitted by contract init were not
+  logged.
+
+## 0.7.1
+
+- Fix bug in parameter size limit parsing for protocol 5.
+
 ## 0.7.0
 
 - Add support for protocol 5.
