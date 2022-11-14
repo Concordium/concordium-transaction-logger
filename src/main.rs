@@ -639,17 +639,41 @@ async fn try_reconnect(
     anyhow::bail!("The node was requested to stop.")
 }
 
-fn get_cis2_events(
-    bi: &BlockItemSummary,
-) -> Option<impl Iterator<Item = (ContractAddress, Vec<cis2::Event>)> + '_> {
-    let log_iter = bi.contract_update_logs()?;
-    let ret = log_iter.flat_map(|(ca, logs)| {
-        match logs.iter().map(cis2::Event::try_from).collect::<Result<Vec<cis2::Event>, _>>() {
-            Ok(events) => Some((ca, events)),
-            Err(_) => None,
+/// Attempt to extract CIS2 events from the block item.
+/// If the transaction is a smart contract init or update transaction then
+/// attempt to parse the events as CIS2 events. If any of the events fail
+/// parsing then the logs for that section of execution are ignored, since it
+/// indicates an error in the contract.
+///
+/// The return value of [`None`] means there are no understandable CIS2 logs
+/// produced.
+fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<cis2::Event>)>> {
+    match bi.contract_update_logs() {
+        Some(log_iter) => Some(
+            log_iter
+                .flat_map(|(ca, logs)| {
+                    match logs
+                        .iter()
+                        .map(cis2::Event::try_from)
+                        .collect::<Result<Vec<cis2::Event>, _>>()
+                    {
+                        Ok(events) => Some((ca, events)),
+                        Err(_) => None,
+                    }
+                })
+                .collect(),
+        ),
+        None => {
+            let init = bi.contract_init()?;
+            let cis2 = init
+                .events
+                .iter()
+                .map(cis2::Event::try_from)
+                .collect::<Result<Vec<cis2::Event>, _>>()
+                .ok()?;
+            Some(vec![(init.address, cis2)])
         }
-    });
-    Some(ret)
+    }
 }
 
 async fn write_to_db(
