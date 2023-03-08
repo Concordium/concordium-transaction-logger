@@ -25,6 +25,14 @@ Log affected accounts and smart contracts into a postgres database.
   finalization before a node is deemed behind is dropped upon a failed query. In
   such a case a new node is attempted.
 
+- `TRANSACTION_LOGGER_CONNECT_TIMEOUT` Maximum number of seconds allowed for the
+  initial connection to the node. Defaults to 10 seconds.
+
+- `TRANSACTION_LOGGER_REQUEST_TIMEOUT` Maximum number of seconds allowed for
+   each GRPC request to the node. Node that this counts time until first
+   response, so streaming calls can take longer. Defaults to 60s.
+
+
 # Failure handling
 
 The service handles nodes disappearing or getting behind, as well as the
