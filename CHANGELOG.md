@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.3
+
+- Add options `TRANSACTION_LOGGER_CONNECT_TIMEOUT` (default 10s) and
+  `TRANSACTION_LOGGER_REQUEST_TIMEOUT` (default 60s) for timing out the initial
+  connection to the node, and each request to the node.
+
 ## 0.7.2
 
 - Fix bug in CIS2 event parsing. Events emitted by contract init were not

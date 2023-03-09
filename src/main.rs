@@ -38,7 +38,7 @@ struct App {
         use_delimiter = true,
         env = "TRANSACTION_LOGGER_NODES"
     )]
-    endpoint:     Vec<v2::Endpoint>,
+    endpoint:        Vec<v2::Endpoint>,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
@@ -46,14 +46,14 @@ struct App {
         help = "Database connection string.",
         env = "TRANSACTION_LOGGER_DB_STRING"
     )]
-    config:       postgres::Config,
+    config:          postgres::Config,
     #[structopt(
         long = "log-level",
         default_value = "off",
         help = "Maximum log level.",
         env = "TRANSACTION_LOGGER_LOG_LEVEL"
     )]
-    log_level:    log::LevelFilter,
+    log_level:       log::LevelFilter,
     #[structopt(
         long = "num-parallel",
         default_value = "1",
@@ -62,7 +62,7 @@ struct App {
                 take advantage of parallelism in queries.",
         env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
     )]
-    num_parallel: u32,
+    num_parallel:    u32,
     #[structopt(
         long = "max-behind-seconds",
         default_value = "240",
@@ -70,7 +70,21 @@ struct App {
                 node is given up and another one is tried.",
         env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
     )]
-    max_behind:   u32,
+    max_behind:      u32,
+    #[structopt(
+        long = "connect-timeout",
+        default_value = "10",
+        help = "Connection timeout for connecting to the node, in seconds",
+        env = "TRANSACTION_LOGGER_CONNECT_TIMEOUT"
+    )]
+    connect_timeout: u32,
+    #[structopt(
+        long = "request-timeout",
+        default_value = "60",
+        help = "Request timeout for node requests, in seconds",
+        env = "TRANSACTION_LOGGER_REQUEST_TIMEOUT"
+    )]
+    request_timeout: u32,
 }
 
 #[derive(SerdeSerialize, Debug)]
@@ -882,6 +896,10 @@ async fn main() -> anyhow::Result<()> {
         }
         // connect to the node.
         log::info!("Attempting to use node {}", node_ep.uri());
+
+        let node_ep = node_ep
+            .connect_timeout(std::time::Duration::from_secs(app.connect_timeout.into()))
+            .timeout(std::time::Duration::from_secs(app.request_timeout.into()));
 
         let node_result = use_node(
             node_ep,
