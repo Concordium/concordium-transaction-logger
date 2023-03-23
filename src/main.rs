@@ -28,6 +28,7 @@ use tokio_postgres::{
     types::{Json, ToSql},
     Transaction as DBTransaction,
 };
+use tonic::transport::ClientTlsConfig;
 
 #[derive(StructOpt)]
 struct App {
@@ -514,6 +515,14 @@ async fn use_node(
     canonical_cache: &mut HashSet<AccountAddressEq>,
     max_behind: u32, // maximum number of seconds a node can be behind before it is deemed "behind"
 ) -> Result<(), NodeError> {
+    // Use TLS if the URI scheme is HTTPS.
+    // This uses whatever system certificates have been installed as trusted roots.
+    let node_ep = if node_ep.uri().scheme().map_or(false, |x| x == &http::uri::Scheme::HTTPS) {
+        node_ep.tls_config(ClientTlsConfig::new()).map_err(NodeError::ConnectionError)?
+    } else {
+        node_ep
+    };
+
     let mut node = v2::Client::new(node_ep).await.map_err(NodeError::ConnectionError)?;
     // if the cache is empty we seed it with all accounts at the last finalized
     // block. This will only happen the first time this function is successfully

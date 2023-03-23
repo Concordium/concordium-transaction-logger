@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.4
+
+- Add support for TLS connection to the node. If the node URL starts with
+  `https` then a TLS connection will be attempted. The service takes certificate
+  roots from the host on which it is running.
+
 ## 0.7.3
 
 - Add options `TRANSACTION_LOGGER_CONNECT_TIMEOUT` (default 10s) and
