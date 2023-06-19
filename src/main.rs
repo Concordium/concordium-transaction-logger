@@ -41,14 +41,14 @@ pub enum BorrowedDatabaseSummaryEntry<'a> {
 
 pub struct SummaryRow<'a> {
     /// Hash of the block the row applies to.
-    pub block_hash: BlockHash,
+    pub block_hash:   BlockHash,
     /// Slot time of the block the row applies to.
-    pub block_time: Timestamp,
+    pub block_time:   Timestamp,
     /// Block height stored in the database.
     pub block_height: AbsoluteBlockHeight,
     /// Summary of the item. Either a user-generated transaction, or a protocol
     /// event that affected the account or contract.
-    pub summary: BorrowedDatabaseSummaryEntry<'a>,
+    pub summary:      BorrowedDatabaseSummaryEntry<'a>,
 }
 
 #[repr(transparent)]
@@ -56,9 +56,7 @@ pub struct SummaryRow<'a> {
 struct AccountAddressEq(AccountAddress);
 
 impl From<AccountAddressEq> for AccountAddress {
-    fn from(aae: AccountAddressEq) -> Self {
-        aae.0
-    }
+    fn from(aae: AccountAddressEq) -> Self { aae.0 }
 }
 
 impl PartialEq for AccountAddressEq {
@@ -77,13 +75,11 @@ impl Hash for AccountAddressEq {
 }
 
 impl AsRef<AccountAddressEq> for AccountAddress {
-    fn as_ref(&self) -> &AccountAddressEq {
-        unsafe { std::mem::transmute(self) }
-    }
+    fn as_ref(&self) -> &AccountAddressEq { unsafe { std::mem::transmute(self) } }
 }
 
 struct BlockItemSummaryWithCanonicalAddresses {
-    pub(crate) summary: BlockItemSummary,
+    pub(crate) summary:   BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
     /// duplicates.
     pub(crate) addresses: Vec<AccountAddress>,
@@ -98,11 +94,11 @@ type TransactionLogData =
 /// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
     /// Insert into the summary table.
-    insert_summary: tokio_postgres::Statement,
+    insert_summary:             tokio_postgres::Statement,
     /// Insert into the account transaction index table.
-    insert_ati: tokio_postgres::Statement,
+    insert_ati:                 tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
-    insert_cti: tokio_postgres::Statement,
+    insert_cti:                 tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -360,8 +356,8 @@ impl PreparedStatements {
     }
 }
 
-/// Insert block into the database. Inserts transactionally by block to facilitate easy recovery if
-/// database connection is lost.
+/// Insert block into the database. Inserts transactionally by block to
+/// facilitate easy recovery if database connection is lost.
 async fn insert_block(
     db: &mut DBConn,
     block_hash: BlockHash,
@@ -522,7 +518,8 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
             .try_collect()
             .await?;
 
-        // Map account addresses affected by each summary to their respective canonical address
+        // Map account addresses affected by each summary to their respective canonical
+        // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
             let affected_addresses = summary.affected_addresses();

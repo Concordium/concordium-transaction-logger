@@ -14,8 +14,9 @@ use tonic::{async_trait, transport::ClientTlsConfig};
 
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
 
-/// A collection of variables supplied to [`run_service`]. These determine how the service runs
-/// with regards to connections to concordium node(s), db, and logging.
+/// A collection of variables supplied to [`run_service`]. These determine how
+/// the service runs with regards to connections to concordium node(s), db, and
+/// logging.
 #[derive(StructOpt)]
 pub struct SharedIndexerArgs {
     #[structopt(
@@ -25,7 +26,7 @@ pub struct SharedIndexerArgs {
         use_delimiter = true,
         env = "TRANSACTION_LOGGER_NODES"
     )]
-    pub endpoint: Vec<v2::Endpoint>,
+    pub endpoint:        Vec<v2::Endpoint>,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
@@ -33,14 +34,14 @@ pub struct SharedIndexerArgs {
         help = "Database connection string.",
         env = "TRANSACTION_LOGGER_DB_STRING"
     )]
-    pub config: postgres::Config,
+    pub config:          postgres::Config,
     #[structopt(
         long = "log-level",
         default_value = "off",
         help = "Maximum log level.",
         env = "TRANSACTION_LOGGER_LOG_LEVEL"
     )]
-    pub log_level: log::LevelFilter,
+    pub log_level:       log::LevelFilter,
     #[structopt(
         long = "num-parallel",
         default_value = "1",
@@ -49,7 +50,7 @@ pub struct SharedIndexerArgs {
                 take advantage of parallelism in queries.",
         env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
     )]
-    pub num_parallel: u32,
+    pub num_parallel:    u32,
     #[structopt(
         long = "max-behind-seconds",
         default_value = "240",
@@ -57,7 +58,7 @@ pub struct SharedIndexerArgs {
                 node is given up and another one is tried.",
         env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
     )]
-    pub max_behind: u32,
+    pub max_behind:      u32,
     #[structopt(
         long = "connect-timeout",
         default_value = "10",
@@ -77,9 +78,9 @@ pub struct SharedIndexerArgs {
 /// Defines necessary interface to be used with [`DBConn`].
 #[async_trait]
 pub trait PrepareStatements {
-    /// Supplies [`DatabaseClient`] with the purpose of preparing a collection of
-    /// [`tokio_postgres::Statement`]s to be used when interacting with the database later in the
-    /// execution.
+    /// Supplies [`DatabaseClient`] with the purpose of preparing a collection
+    /// of [`tokio_postgres::Statement`]s to be used when interacting with
+    /// the database later in the execution.
     async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error>
     where
         Self: Sized;
@@ -88,9 +89,9 @@ pub trait PrepareStatements {
 /// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 pub struct DBConn<P> {
     /// DatabaseClient to be used when interacting with the database.
-    pub client: DatabaseClient,
-    /// A collection of prepared statements for the associtated [`client`] to be used when interacting with the
-    /// database
+    pub client:   DatabaseClient,
+    /// A collection of prepared statements for the associtated [`client`] to be
+    /// used when interacting with the database
     pub prepared: P,
 }
 
@@ -120,23 +121,19 @@ impl<P: PrepareStatements> DBConn<P> {
 }
 
 impl<P> AsRef<DatabaseClient> for DBConn<P> {
-    fn as_ref(&self) -> &DatabaseClient {
-        &self.client
-    }
+    fn as_ref(&self) -> &DatabaseClient { &self.client }
 }
 
 impl<P> AsMut<DatabaseClient> for DBConn<P> {
-    fn as_mut(&mut self) -> &mut DatabaseClient {
-        &mut self.client
-    }
+    fn as_mut(&mut self) -> &mut DatabaseClient { &mut self.client }
 }
 
 /// Holds information pertaining to block insertion into database.
 pub struct BlockInsertSuccess {
     /// The time it took to insert the block.
-    pub time: chrono::Duration,
+    pub time:         chrono::Duration,
     /// The hash of the inserted block.
-    pub block_hash: BlockHash,
+    pub block_hash:   BlockHash,
     /// The height of the inserted block.
     pub block_height: AbsoluteBlockHeight,
 }
@@ -155,20 +152,22 @@ pub enum DatabaseError {
 /// Defines a set of necessary callbacks used by the database thread.
 #[async_trait]
 pub trait DatabaseHooks<D, P> {
-    /// Invoked by database thread every time a block has been received to be inserted into the
-    /// database.
+    /// Invoked by database thread every time a block has been received to be
+    /// inserted into the database.
     async fn insert_into_db(
         db_conn: &mut DBConn<P>,
         data: &D,
     ) -> Result<BlockInsertSuccess, DatabaseError>;
 
-    /// Invoked by the database thread to request the latest recorded height in the database.
+    /// Invoked by the database thread to request the latest recorded height in
+    /// the database.
     async fn on_request_max_height(
         db: &DatabaseClient,
     ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError>;
 }
 
-/// A collection of possible errors that can happen while using the node to query data.
+/// A collection of possible errors that can happen while using the node to
+/// query data.
 #[derive(Debug, Error)]
 pub enum NodeError {
     /// Error establishing connection.
@@ -191,8 +190,8 @@ pub enum NodeError {
 /// Defines a set of necessary callbacks used while interacting with a node.
 #[async_trait]
 pub trait NodeHooks<D> {
-    /// Invoked when a new node is being used. Should be used for one-time exectution each time a node
-    /// is being cycled for use.
+    /// Invoked when a new node is being used. Should be used for one-time
+    /// exectution each time a node is being cycled for use.
     async fn on_use_node(&mut self, client: &mut v2::Client) -> Result<(), NodeError>;
 
     /// Invoked when a finalized block is received when traversing the chain.
@@ -239,8 +238,7 @@ async fn try_reconnect<P>(
     create_tables: bool,
 ) -> anyhow::Result<DBConn<P>>
 where
-    P: PrepareStatements,
-{
+    P: PrepareStatements, {
     let mut i = 1;
     let sql_opt: Option<&str> = if create_tables {
         Some(sql_schema)
@@ -264,8 +262,8 @@ where
             }
             Err(e) => {
                 log::error!(
-                    "Could not connect to the database in {} attempts. Last attempt failed \
-                         with reason {:#}.",
+                    "Could not connect to the database in {} attempts. Last attempt failed with \
+                     reason {:#}.",
                     MAX_CONNECT_ATTEMPTS,
                     e
                 );
@@ -276,7 +274,9 @@ where
     anyhow::bail!("The node was requested to stop.")
 }
 
-/// Handles database related execution, using `H` for domain-specific database queries. Will attempt to reconnect to database on errors. Runs until `stop_flag` is triggered.
+/// Handles database related execution, using `H` for domain-specific database
+/// queries. Will attempt to reconnect to database on errors. Runs until
+/// `stop_flag` is triggered.
 async fn write_to_db<D, P, H>(
     config: postgres::Config,
     sql_schema: &str,
@@ -286,8 +286,7 @@ async fn write_to_db<D, P, H>(
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
-    H: DatabaseHooks<D, P>,
-{
+    H: DatabaseHooks<D, P>, {
     let mut db = try_reconnect(&config, sql_schema, &stop_flag, true).await?;
 
     let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
@@ -323,8 +322,7 @@ where
                         500 * (1 << std::cmp::min(successive_errors, 8)),
                     );
                     log::error!(
-                        "Database connection lost due to {:#}. Will attempt to reconnect in \
-                             {}ms.",
+                        "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
                         e,
                         delay.as_millis()
                     );
@@ -342,8 +340,8 @@ where
                         Ok(v) => {
                             if let Err(e) = v {
                                 log::warn!(
-                                    "Could not correctly stop the old database connection due \
-                                         to: {}.",
+                                    "Could not correctly stop the old database connection due to: \
+                                     {}.",
                                     e
                                 );
                             }
@@ -351,8 +349,8 @@ where
                         Err(e) => {
                             if e.is_panic() {
                                 log::warn!(
-                                    "Could not correctly stop the old database connection. \
-                                         The connection thread panicked."
+                                    "Could not correctly stop the old database connection. The \
+                                     connection thread panicked."
                                 );
                             } else {
                                 log::warn!("Could not correctly stop the old database connection.");
@@ -372,9 +370,9 @@ where
     Ok(())
 }
 
-/// Handles single-node connection and traversing the chain, delegating domain-specific processing
-/// to `hooks` and sends data of type `D` to database thread.
-/// Return Err if querying the node failed.
+/// Handles single-node connection and traversing the chain, delegating
+/// domain-specific processing to `hooks` and sends data of type `D` to database
+/// thread. Return Err if querying the node failed.
 /// Return Ok(()) if the channel to the database was closed.
 #[allow(clippy::too_many_arguments)]
 async fn node_process<D, H>(
@@ -383,12 +381,12 @@ async fn node_process<D, H>(
     height: &mut AbsoluteBlockHeight, // start height
     max_parallel: u32,
     stop_flag: &AtomicBool,
-    max_behind: u32, /* maximum number of seconds a node can be behind before it is deemed "behind" */
+    max_behind: u32, /* maximum number of seconds a node can be behind before it is deemed
+                      * "behind" */
     hooks: &mut H,
 ) -> Result<(), NodeError>
 where
-    H: NodeHooks<D>,
-{
+    H: NodeHooks<D>, {
     // Use TLS if the URI scheme is HTTPS.
     // This uses whatever system certificates have been installed as trusted roots.
     let node_ep = if node_ep.uri().scheme().map_or(false, |x| x == &http::uri::Scheme::HTTPS) {
@@ -410,9 +408,9 @@ where
             .map_err(|_| NodeError::Timeout)?;
 
         for fb in chunks {
-            let d = hooks.on_finalized_block(&mut node, &fb).await?;
+            let data = hooks.on_finalized_block(&mut node, &fb).await?;
 
-            if sender.send(d).await.is_err() {
+            if sender.send(data).await.is_err() {
                 log::error!("The database connection has been closed. Terminating node queries.");
                 return Ok(());
             }
@@ -430,11 +428,11 @@ where
     Ok(())
 }
 
-/// Executes service infrastructure. Handles connections to a set of nodes and a database
-/// (configured with `app_config`) on their
+/// Executes service infrastructure. Handles connections to a set of nodes and a
+/// database (configured with `app_config`) on their
 /// own separate threads.
-/// Implementation of `NH` defines hooks used by the node thread, while implementation of `DH`
-/// defines hooks used by the database thread.
+/// Implementation of `NH` defines hooks used by the node thread, while
+/// implementation of `DH` defines hooks used by the database thread.
 pub async fn run_service<D, P, DH, NH>(
     sql_schema: &'static str,
     app_config: SharedIndexerArgs,
@@ -445,10 +443,9 @@ where
     P: PrepareStatements + Send + 'static,
     D: Send + Sync + 'static,
     DH: DatabaseHooks<D, P> + Send + Sync + 'static,
-    NH: NodeHooks<D>,
-{
+    NH: NodeHooks<D>, {
     anyhow::ensure!(!app_config.endpoint.is_empty(), "At least one node must be provided.");
-    let config = app_config.config;
+    let db_config = app_config.config;
 
     let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
     log_builder.filter_module(module_path!(), app_config.log_level);
@@ -489,7 +486,7 @@ where
     let shutdown_handler_handle = tokio::spawn(set_shutdown(stop_flag.clone()));
 
     let db_write_handle = tokio::spawn(write_to_db::<D, P, DH>(
-        config,
+        db_config,
         sql_schema,
         height_sender,
         receiver,
@@ -514,7 +511,7 @@ where
             let delay = std::time::Duration::from_secs(5);
             log::error!(
                 "Connections to all nodes have failed. Pausing for {}s before trying node {} \
-                     again.",
+                 again.",
                 delay.as_secs(),
                 node_ep.uri()
             );
