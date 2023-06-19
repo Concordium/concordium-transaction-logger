@@ -439,6 +439,7 @@ pub async fn run_service<D, P, DH, NH>(
     sql_schema: &'static str,
     app_config: SharedIndexerArgs,
     mut node_hooks: NH,
+    config_logger: Option<impl FnOnce(&mut env_logger::Builder, log::LevelFilter)>,
 ) -> Result<(), anyhow::Error>
 where
     P: PrepareStatements + Send + 'static,
@@ -450,8 +451,10 @@ where
     let config = app_config.config;
 
     let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
-    // only log the current module (main).
-    log_builder.filter_module(module_path!(), app_config.log_level); // TODO: correct module?
+    log_builder.filter_module(module_path!(), app_config.log_level);
+    if let Some(config_logger) = config_logger {
+        config_logger(&mut log_builder, app_config.log_level);
+    }
     log_builder.init();
 
     // This program is set up as follows.

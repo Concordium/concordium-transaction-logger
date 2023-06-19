@@ -438,6 +438,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<ci
     }
 }
 
+/// Handles database-related execution delegated from service infrastructure.
 struct DatabaseDelegate;
 
 #[async_trait]
@@ -471,6 +472,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
     }
 }
 
+/// Handles node-related execution delegated from service infrastructure.
 struct NodeDelegate {
     canonical_cache: HashSet<AccountAddressEq>,
 }
@@ -575,9 +577,15 @@ async fn main() -> anyhow::Result<()> {
     let node_hooks = NodeDelegate {
         canonical_cache: HashSet::new(),
     };
+    let config_logger = |builder: &mut env_logger::Builder, log_level: log::LevelFilter| {
+        builder.filter_module(module_path!(), log_level);
+    };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseDelegate, NodeDelegate>(
-        sql_schema, app, node_hooks,
+        sql_schema,
+        app,
+        node_hooks,
+        Some(config_logger),
     )
     .await?;
 
