@@ -14,6 +14,8 @@ use tonic::{async_trait, transport::ClientTlsConfig};
 
 const MAX_CONNECT_ATTEMPTS: u64 = 6;
 
+/// A collection of variables supplied to [`run_service`]. These determine how the service runs
+/// with regards to connections to concordium node(s), db, and logging.
 #[derive(StructOpt)]
 pub struct SharedIndexerArgs {
     #[structopt(
@@ -72,8 +74,12 @@ pub struct SharedIndexerArgs {
     pub request_timeout: u32,
 }
 
+/// Defines necessary interface to be used with [`DBConn`].
 #[async_trait]
 pub trait PrepareStatements {
+    /// Supplies [`DatabaseClient`] with the purpose of preparing a collection of
+    /// [`tokio_postgres::Statement`]s to be used when interacting with the database later in the
+    /// execution.
     async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error>
     where
         Self: Sized;
@@ -81,7 +87,10 @@ pub trait PrepareStatements {
 
 /// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 pub struct DBConn<P> {
+    /// DatabaseClient to be used when interacting with the database.
     pub client: DatabaseClient,
+    /// A collection of prepared statements for the associtated [`client`] to be used when interacting with the
+    /// database
     pub prepared: P,
 }
 
@@ -122,18 +131,33 @@ impl<P> AsMut<DatabaseClient> for DBConn<P> {
     }
 }
 
+/// Holds information pertaining to block insertion into database.
+pub struct BlockInsertSuccess {
+    /// The time it took to insert the block.
+    pub time: chrono::Duration,
+    /// The hash of the inserted block.
+    pub block_hash: BlockHash,
+    /// The height of the inserted block.
+    pub block_height: AbsoluteBlockHeight,
+}
+
+/// Defines a set of necessary callbacks used by the database thread.
 #[async_trait]
 pub trait DatabaseHooks<D, P> {
+    /// Invoked by database thread every time a block has been received to be inserted into the
+    /// database.
     async fn insert_into_db(
         db_conn: &mut DBConn<P>,
         data: &D,
     ) -> Result<BlockInsertSuccess, postgres::Error>;
 
+    /// Invoked by the database thread to request the latest recorded height in the database.
     async fn on_request_max_height(
         db: &DatabaseClient,
     ) -> Result<Option<AbsoluteBlockHeight>, postgres::Error>;
 }
 
+/// A collection of possible errors that can happen while using the node to query data.
 #[derive(Debug, Error)]
 pub enum NodeError {
     /// Error establishing connection.
@@ -153,21 +177,19 @@ pub enum NodeError {
     OtherError(#[from] anyhow::Error),
 }
 
+/// Defines a set of necessary callbacks used while interacting with a node.
 #[async_trait]
 pub trait NodeHooks<D> {
+    /// Invoked when a new node is being used. Should be used for one-time exectution each time a node
+    /// is being cycled for use.
     async fn on_use_node(&mut self, client: &mut v2::Client) -> Result<(), NodeError>;
 
+    /// Invoked when a finalized block is received when traversing the chain.
     async fn on_finalized_block(
         &mut self,
         client: &mut v2::Client,
         finalized_block_info: &FinalizedBlockInfo,
     ) -> Result<D, NodeError>;
-}
-
-pub struct BlockInsertSuccess {
-    pub time: chrono::Duration,
-    pub block_hash: BlockHash,
-    pub block_height: AbsoluteBlockHeight,
 }
 
 /// Construct a future for shutdown signals (for unix: SIGINT and SIGTERM) (for
@@ -198,7 +220,7 @@ async fn set_shutdown(flag: Arc<AtomicBool>) -> anyhow::Result<()> {
 }
 
 /// Try to reconnect to the database with exponential backoff, at most
-/// MAX_CONNECT_ATTEMPTS times.
+/// [`MAX_CONNECT_ATTEMPTS`] times.
 async fn try_reconnect<P>(
     config: &postgres::Config,
     sql_schema: &str,
@@ -243,6 +265,7 @@ where
     anyhow::bail!("The node was requested to stop.")
 }
 
+/// Handles database related execution, using `H` for domain-specific database queries. Will attempt to reconnect to database on errors. Runs until `stop_flag` is triggered.
 async fn write_to_db<D, P, H>(
     config: postgres::Config,
     sql_schema: &str,
@@ -338,6 +361,8 @@ where
     Ok(())
 }
 
+/// Handles single-node connection and traversing the chain, delegating domain-specific processing
+/// to `hooks` and sends data of type `D` to database thread.
 /// Return Err if querying the node failed.
 /// Return Ok(()) if the channel to the database was closed.
 #[allow(clippy::too_many_arguments)]
@@ -394,6 +419,11 @@ where
     Ok(())
 }
 
+/// Executes service infrastructure. Handles connections to a set of nodes and a database
+/// (configured with `app_config`) on their
+/// own separate threads.
+/// Implementation of `NH` defines hooks used by the node thread, while implementation of `DH`
+/// defines hooks used by the database thread.
 pub async fn run_service<D, P, DH, NH>(
     sql_schema: &'static str,
     app_config: SharedIndexerArgs,
