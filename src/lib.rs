@@ -141,6 +141,17 @@ pub struct BlockInsertSuccess {
     pub block_height: AbsoluteBlockHeight,
 }
 
+/// A collection of possible errors that can happen while using the database.
+#[derive(Debug, Error)]
+pub enum DatabaseError {
+    /// Database error.
+    #[error("Error using the database {0}.")]
+    PostgresError(#[from] postgres::Error),
+    /// Other errors while processing database data.
+    #[error("Error using the database {0}.")]
+    OtherError(#[from] anyhow::Error),
+}
+
 /// Defines a set of necessary callbacks used by the database thread.
 #[async_trait]
 pub trait DatabaseHooks<D, P> {
@@ -149,12 +160,12 @@ pub trait DatabaseHooks<D, P> {
     async fn insert_into_db(
         db_conn: &mut DBConn<P>,
         data: &D,
-    ) -> Result<BlockInsertSuccess, postgres::Error>;
+    ) -> Result<BlockInsertSuccess, DatabaseError>;
 
     /// Invoked by the database thread to request the latest recorded height in the database.
     async fn on_request_max_height(
         db: &DatabaseClient,
-    ) -> Result<Option<AbsoluteBlockHeight>, postgres::Error>;
+    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError>;
 }
 
 /// A collection of possible errors that can happen while using the node to query data.

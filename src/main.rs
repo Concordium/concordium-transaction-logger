@@ -21,8 +21,8 @@ use tokio_postgres::{
 };
 use tonic::async_trait;
 use transaction_logger::{
-    run_service, BlockInsertSuccess, DatabaseHooks, NodeError, NodeHooks, PrepareStatements,
-    SharedIndexerArgs,
+    run_service, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError, NodeHooks,
+    PrepareStatements, SharedIndexerArgs,
 };
 
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
@@ -360,6 +360,8 @@ impl PreparedStatements {
     }
 }
 
+/// Insert block into the database. Inserts transactionally by block to facilitate easy recovery if
+/// database connection is lost.
 async fn insert_block(
     db: &mut DBConn,
     block_hash: BlockHash,
@@ -385,6 +387,7 @@ async fn insert_block(
     Ok(end)
 }
 
+/// Get the last recorded block height from the database.
 async fn get_last_block_height(
     db: &DatabaseClient,
 ) -> Result<Option<AbsoluteBlockHeight>, postgres::Error> {
@@ -442,8 +445,8 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
     async fn insert_into_db(
         db_conn: &mut DBConn,
         (bi, item_summaries, special_events): &TransactionLogData,
-    ) -> Result<BlockInsertSuccess, postgres::Error> {
-        let res = insert_block(
+    ) -> Result<BlockInsertSuccess, DatabaseError> {
+        let time = insert_block(
             db_conn,
             bi.block_hash,
             (bi.block_slot_time.timestamp_millis() as u64).into(),
@@ -451,9 +454,9 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
             item_summaries,
             special_events,
         )
-        .await;
+        .await?;
 
-        res.map(|time| BlockInsertSuccess {
+        Ok(BlockInsertSuccess {
             time,
             block_height: bi.block_height,
             block_hash: bi.block_hash,
@@ -462,8 +465,9 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
 
     async fn on_request_max_height(
         db: &DatabaseClient,
-    ) -> Result<Option<AbsoluteBlockHeight>, postgres::Error> {
-        get_last_block_height(db).await
+    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError> {
+        let height = get_last_block_height(db).await?;
+        Ok(height)
     }
 }
 
@@ -498,6 +502,7 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
         node: &mut v2::Client,
         finalized_block_info: &FinalizedBlockInfo,
     ) -> Result<TransactionLogData, NodeError> {
+        // Collect necessary block-specific information from the `node`
         let binfo = node.get_block_info(finalized_block_info.block_hash).await?.response;
         let transaction_summaries = if binfo.transaction_count == 0 {
             Vec::new()
@@ -515,6 +520,7 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
             .try_collect()
             .await?;
 
+        // Map account addresses affected by each summary to their respective canonical address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
             let affected_addresses = summary.affected_addresses();
