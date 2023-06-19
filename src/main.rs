@@ -51,12 +51,48 @@ pub struct SummaryRow<'a> {
     pub summary: BorrowedDatabaseSummaryEntry<'a>,
 }
 
+#[repr(transparent)]
+#[derive(Eq, Debug, Clone, Copy)]
+struct AccountAddressEq(AccountAddress);
+
+impl From<AccountAddressEq> for AccountAddress {
+    fn from(aae: AccountAddressEq) -> Self {
+        aae.0
+    }
+}
+
+impl PartialEq for AccountAddressEq {
+    fn eq(&self, other: &Self) -> bool {
+        let bytes_1: &[u8; 32] = self.0.as_ref();
+        let bytes_2: &[u8; 32] = other.0.as_ref();
+        bytes_1[0..29] == bytes_2[0..29]
+    }
+}
+
+impl Hash for AccountAddressEq {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let bytes: &[u8; 32] = self.0.as_ref();
+        bytes[0..29].hash(state);
+    }
+}
+
+impl AsRef<AccountAddressEq> for AccountAddress {
+    fn as_ref(&self) -> &AccountAddressEq {
+        unsafe { std::mem::transmute(self) }
+    }
+}
+
 struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) summary: BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
     /// duplicates.
     pub(crate) addresses: Vec<AccountAddress>,
 }
+
+/// Data sent by the node query task to the transaction insertion task.
+/// Contains all the information needed to build the transaction index.
+type TransactionLogData =
+    (BlockInfo, Vec<BlockItemSummaryWithCanonicalAddresses>, Vec<SpecialTransactionOutcome>);
 
 /// Prepared statements for all insertions. Prepared statements are
 /// per-connection so we have to re-create them each time we reconnect.
@@ -362,165 +398,6 @@ async fn get_last_block_height(
     }
 }
 
-/// Data sent by the node query task to the transaction insertion task.
-/// Contains all the information needed to build the transaction index.
-type TransactionLogData =
-    (BlockInfo, Vec<BlockItemSummaryWithCanonicalAddresses>, Vec<SpecialTransactionOutcome>);
-
-#[repr(transparent)]
-#[derive(Eq, Debug, Clone, Copy)]
-struct AccountAddressEq(AccountAddress);
-
-impl From<AccountAddressEq> for AccountAddress {
-    fn from(aae: AccountAddressEq) -> Self {
-        aae.0
-    }
-}
-
-impl PartialEq for AccountAddressEq {
-    fn eq(&self, other: &Self) -> bool {
-        let bytes_1: &[u8; 32] = self.0.as_ref();
-        let bytes_2: &[u8; 32] = other.0.as_ref();
-        bytes_1[0..29] == bytes_2[0..29]
-    }
-}
-
-impl Hash for AccountAddressEq {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let bytes: &[u8; 32] = self.0.as_ref();
-        bytes[0..29].hash(state);
-    }
-}
-
-impl AsRef<AccountAddressEq> for AccountAddress {
-    fn as_ref(&self) -> &AccountAddressEq {
-        unsafe { std::mem::transmute(self) }
-    }
-}
-
-/// Return Err if querying the node failed.
-/// Return Ok(()) if the channel to the database was closed.
-// #[allow(clippy::too_many_arguments)]
-// async fn use_node(
-//     node_ep: v2::Endpoint,
-//     sender: &tokio::sync::mpsc::Sender<TransactionLogData>,
-//     height: &mut AbsoluteBlockHeight, // start height
-//     max_parallel: u32,
-//     stop_flag: &AtomicBool,
-//     canonical_cache: &mut HashSet<AccountAddressEq>,
-//     max_behind: u32, // maximum number of seconds a node can be behind before it is deemed "behind"
-// ) -> Result<(), NodeError> {
-//     // Use TLS if the URI scheme is HTTPS.
-//     // This uses whatever system certificates have been installed as trusted roots.
-//     let node_ep = if node_ep.uri().scheme().map_or(false, |x| x == &http::uri::Scheme::HTTPS) {
-//         node_ep.tls_config(ClientTlsConfig::new()).map_err(NodeError::ConnectionError)?
-//     } else {
-//         node_ep
-//     };
-
-//     let mut node = v2::Client::new(node_ep).await.map_err(NodeError::ConnectionError)?;
-//     // if the cache is empty we seed it with all accounts at the last finalized
-//     // block. This will only happen the first time this function is successfully
-//     // invoked.
-//     if canonical_cache.is_empty() {
-//         let accounts_response = node
-//             .get_account_list(&v2::BlockIdentifier::LastFinal)
-//             .await
-//             .context("Error querying account list.")?;
-//         let accounts = accounts_response.response;
-//         let r = accounts
-//             .try_fold(HashSet::new(), |mut cc, addr| async move {
-//                 let _ = cc.insert(AccountAddressEq(addr));
-//                 Ok(cc)
-//             })
-//             .await?;
-//         *canonical_cache = r;
-//     }
-//     let mut finalized_blocks = node.get_finalized_blocks_from(*height).await?;
-//     let timeout = std::time::Duration::from_secs(max_behind.into());
-//     while !stop_flag.load(Ordering::Acquire) {
-//         let (error, chunk) = finalized_blocks
-//             .next_chunk_timeout(max_parallel as usize, timeout)
-//             .await
-//             .map_err(|_| NodeError::Timeout)?;
-//         let mut futures = futures::stream::FuturesOrdered::new();
-//         for fb in chunk {
-//             let mut node = node.clone();
-//             futures.push_back(async move {
-//                 let binfo = node.get_block_info(fb.block_hash).await?;
-//                 let events = if binfo.response.transaction_count == 0 {
-//                     Vec::new()
-//                 } else {
-//                     node.get_block_transaction_events(fb.block_hash)
-//                         .await?
-//                         .response
-//                         .try_collect()
-//                         .await?
-//                 };
-//                 let special = node
-//                     .get_block_special_events(fb.block_hash)
-//                     .await?
-//                     .response
-//                     .try_collect()
-//                     .await?;
-//                 Ok::<
-//                     (BlockInfo, Vec<BlockItemSummary>, Vec<SpecialTransactionOutcome>),
-//                     anyhow::Error,
-//                 >((binfo.response, events, special))
-//             });
-//         }
-//         while let Some(result) = futures.next().await {
-//             let (binfo, transaction_summaries, special_events) = result?;
-//             let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
-//             for summary in transaction_summaries {
-//                 let affected_addresses = summary.affected_addresses();
-//                 let mut addresses = Vec::with_capacity(affected_addresses.len());
-//                 // resolve canonical addresses. This part is only needed because the index
-//                 // is currently expected by "canonical address",
-//                 // which is only possible to resolve by querying the node.
-//                 let mut seen = HashSet::with_capacity(affected_addresses.len());
-//                 for address in affected_addresses.into_iter() {
-//                     if let Some(addr) = canonical_cache.get(address.as_ref()) {
-//                         let addr = AccountAddress::from(*addr);
-//                         if seen.insert(addr) {
-//                             addresses.push(addr);
-//                         }
-//                     } else {
-//                         let ainfo = node
-//                             .get_account_info(&address.into(), binfo.block_hash)
-//                             .await
-//                             .context("Error querying account info.")?
-//                             .response;
-//                         let addr = ainfo.account_address;
-//                         if seen.insert(addr) {
-//                             log::debug!("Discovered new address {}", addr);
-//                             addresses.push(addr);
-//                             canonical_cache.insert(AccountAddressEq(addr));
-//                         } else {
-//                             log::debug!("Canonical address {} already listed.", addr);
-//                         }
-//                     }
-//                 }
-//                 with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
-//                     summary,
-//                     addresses,
-//                 })
-//             }
-//             if sender.send((binfo, with_addresses, special_events)).await.is_err() {
-//                 log::error!("The database connection has been closed. Terminating node queries.");
-//                 return Ok(());
-//             }
-//             *height = height.next();
-//         }
-//         if error {
-//             // we have processed the blocks we can, but further queries on the same stream
-//             // will fail since the stream signalled an error.
-//             return Err(NodeError::OtherError(anyhow::anyhow!("Finalized block stream dropped.")));
-//         }
-//     }
-//     Ok(())
-// }
-
 /// Attempt to extract CIS2 events from the block item.
 /// If the transaction is a smart contract init or update transaction then
 /// attempt to parse the events as CIS2 events. If any of the events fail
@@ -618,10 +495,63 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
 
     async fn on_finalized_block(
         &mut self,
-        client: &mut v2::Client,
+        node: &mut v2::Client,
         finalized_block_info: &FinalizedBlockInfo,
     ) -> Result<TransactionLogData, NodeError> {
-        todo!()
+        let binfo = node.get_block_info(finalized_block_info.block_hash).await?.response;
+        let transaction_summaries = if binfo.transaction_count == 0 {
+            Vec::new()
+        } else {
+            node.get_block_transaction_events(finalized_block_info.block_hash)
+                .await?
+                .response
+                .try_collect()
+                .await?
+        };
+        let special_events = node
+            .get_block_special_events(finalized_block_info.block_hash)
+            .await?
+            .response
+            .try_collect()
+            .await?;
+
+        let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
+        for summary in transaction_summaries {
+            let affected_addresses = summary.affected_addresses();
+            let mut addresses = Vec::with_capacity(affected_addresses.len());
+            // resolve canonical addresses. This part is only needed because the index
+            // is currently expected by "canonical address",
+            // which is only possible to resolve by querying the node.
+            let mut seen = HashSet::with_capacity(affected_addresses.len());
+            for address in affected_addresses.into_iter() {
+                if let Some(addr) = self.canonical_cache.get(address.as_ref()) {
+                    let addr = AccountAddress::from(*addr);
+                    if seen.insert(addr) {
+                        addresses.push(addr);
+                    }
+                } else {
+                    let ainfo = node
+                        .get_account_info(&address.into(), binfo.block_hash)
+                        .await
+                        .context("Error querying account info.")?
+                        .response;
+                    let addr = ainfo.account_address;
+                    if seen.insert(addr) {
+                        log::debug!("Discovered new address {}", addr);
+                        addresses.push(addr);
+                        self.canonical_cache.insert(AccountAddressEq(addr));
+                    } else {
+                        log::debug!("Canonical address {} already listed.", addr);
+                    }
+                }
+            }
+            with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
+                summary,
+                addresses,
+            })
+        }
+
+        Ok((binfo, with_addresses, special_events))
     }
 }
 
@@ -634,7 +564,6 @@ async fn main() -> anyhow::Result<()> {
         let matches = app.get_matches();
         SharedIndexerArgs::from_clap(&matches)
     };
-    anyhow::ensure!(!app.endpoint.is_empty(), "At least one node must be provided.");
 
     let sql_schema = include_str!("../resources/schema.sql");
     let node_hooks = NodeDelegate {
@@ -648,128 +577,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-
-// #[tokio::main(flavor = "multi_thread")]
-// async fn main() -> anyhow::Result<()> {
-//     let app = {
-//         let app = SharedIndexerArgs::clap()
-//             // .setting(AppSettings::ArgRequiredElseHelp)
-//             .global_setting(AppSettings::ColoredHelp);
-//         let matches = app.get_matches();
-//         SharedIndexerArgs::from_clap(&matches)
-//     };
-//     anyhow::ensure!(!app.endpoint.is_empty(), "At least one node must be provided.");
-//     let config = app.config;
-
-//     let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
-//     // only log the current module (main).
-//     log_builder.filter_module(module_path!(), app.log_level);
-//     log_builder.init();
-
-//     // This program is set up as follows.
-//     // It uses tokio to manage tasks. The reason for this is that it is the
-//     // expectation that the main bottleneck is IO, either writing to the database or
-//     // waiting for responses from the node.
-//     // A background task is spawned whose only purpose is to write to the database.
-//     // That task only terminates if the connection to the database is lost and
-//     // cannot be established within half a minute or so (duration is governed by
-//     // MAX_CONNECT_ATTEMPTS and exponential backoff).
-//     //
-//     // In the main task we query the nodes for block summaries. If querying the node
-//     // fails, or the node is deemed too behind then we try the next node. The given
-//     // nodes are tried in sequence and cycled when the end of the sequence is
-//     // reached.
-//     //
-//     // The main task and the database writer task communicate via a bounded channel,
-//     // with the main task sending block info and block summaries to the database
-//     // writer thread.
-
-//     // Since the database connection is managed by the background task we use a
-//     // oneshot channel to get the height we should start querying at. First the
-//     // background database task is started which then sends the height over this
-//     // channel.
-//     let (height_sender, height_receiver) = tokio::sync::oneshot::channel();
-//     // Create a channel between the task querying the node and the task logging
-//     // transactions.
-//     let (sender, receiver) = tokio::sync::mpsc::channel(100);
-
-//     let stop_flag = Arc::new(AtomicBool::new(false));
-
-//     let shutdown_handler_handle = tokio::spawn(set_shutdown(stop_flag.clone()));
-
-//     let db_write_handle =
-//         tokio::spawn(write_to_db(config, height_sender, receiver, stop_flag.clone()));
-//     // The height we should start querying the node at.
-//     // If the sender died we simply terminate the program.
-//     let mut height = height_receiver.await?;
-
-//     // Cache where we store the mapping from account aliases to canonical account
-//     // addresses. This is done by storing just equivalence classes represented
-//     // by the canonical address.
-//     let mut canonical_cache = HashSet::new();
-//     // To make sure we do not end up in an infinite loop in case all reconnects fail
-//     // we count reconnects. We deem a node connection successful if it increases
-//     // maximum achieved height by at least 1.
-//     let mut max_height = height;
-//     let mut last_success = 0;
-//     let num_nodes = app.endpoint.len() as u64;
-//     for (node_ep, idx) in app.endpoint.into_iter().cycle().zip(0u64..) {
-//         if stop_flag.load(Ordering::Acquire) {
-//             break;
-//         }
-//         if idx.saturating_sub(last_success) >= num_nodes {
-//             // we skipped all the nodes without success.
-//             let delay = std::time::Duration::from_secs(5);
-//             log::error!(
-//                 "Connections to all nodes have failed. Pausing for {}s before trying node {} \
-//                  again.",
-//                 delay.as_secs(),
-//                 node_ep.uri()
-//             );
-//             tokio::time::sleep(delay).await;
-//         }
-//         // connect to the node.
-//         log::info!("Attempting to use node {}", node_ep.uri());
-
-//         let node_ep = node_ep
-//             .connect_timeout(std::time::Duration::from_secs(app.connect_timeout.into()))
-//             .timeout(std::time::Duration::from_secs(app.request_timeout.into()));
-
-//         let node_result = use_node(
-//             node_ep,
-//             &sender,
-//             &mut height,
-//             app.num_parallel,
-//             stop_flag.as_ref(),
-//             &mut canonical_cache,
-//             app.max_behind,
-//         )
-//         .await;
-
-//         match node_result {
-//             Err(NodeError::ConnectionError(e)) => {
-//                 log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
-//             }
-//             Err(NodeError::OtherError(e)) => {
-//                 log::warn!("Node query failed due to: {:#}. Will attempt another node.", e);
-//             }
-//             Err(NodeError::NetworkError(e)) => {
-//                 log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
-//             }
-//             Err(NodeError::QueryError(e)) => {
-//                 log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
-//             }
-//             Err(NodeError::Timeout) => {
-//                 log::warn!("Node too far behind. Will attempt another node.");
-//             }
-//             Ok(()) => break,
-//         }
-//         if height > max_height {
-//             last_success = idx;
-//             max_height = height;
-//         }
-//     }
-//     db_write_handle.abort();
-//     shutdown_handler_handle.abort();
-//     Ok(())
-// }
