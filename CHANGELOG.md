@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.0
+
+- Add support for node version 6. This is a breaking change and this version
+  of the logger only supports node version 6.
+
 ## 0.7.4
 
 - Add support for TLS connection to the node. If the node URL starts with
