@@ -27,6 +27,68 @@ use transaction_logger::{
 
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
+const MAX_CONNECT_ATTEMPTS: u32 = 6;
+
+/// A collection on arguments necessary to run the service. These are supplied via the command
+/// line.
+#[derive(StructOpt)]
+struct Args {
+    #[structopt(
+        long = "node",
+        help = "GRPC interface of the node(s).",
+        default_value = "http://localhost:20000",
+        use_delimiter = true,
+        env = "TRANSACTION_LOGGER_NODES"
+    )]
+    endpoint: Vec<v2::Endpoint>,
+    #[structopt(
+        long = "db",
+        default_value = "host=localhost dbname=transaction-outcome user=postgres \
+                         password=password port=5432",
+        help = "Database connection string.",
+        env = "TRANSACTION_LOGGER_DB_STRING"
+    )]
+    config: postgres::Config,
+    #[structopt(
+        long = "log-level",
+        default_value = "off",
+        help = "Maximum log level.",
+        env = "TRANSACTION_LOGGER_LOG_LEVEL"
+    )]
+    log_level: log::LevelFilter,
+    #[structopt(
+        long = "num-parallel",
+        default_value = "1",
+        help = "Maximum number of parallel queries to make to the node. Usually 1 is the correct \
+                number, but during initial catchup it is useful to increase this to, say 8 to \
+                take advantage of parallelism in queries.",
+        env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
+    )]
+    num_parallel: u32,
+    #[structopt(
+        long = "max-behind-seconds",
+        default_value = "240",
+        help = "Maximum number of seconds the node's last finalization can be behind before the \
+                node is given up and another one is tried.",
+        env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
+    )]
+    max_behind: u32,
+    #[structopt(
+        long = "connect-timeout",
+        default_value = "10",
+        help = "Connection timeout for connecting to the node, in seconds",
+        env = "TRANSACTION_LOGGER_CONNECT_TIMEOUT"
+    )]
+    connect_timeout: u32,
+    #[structopt(
+        long = "request-timeout",
+        default_value = "60",
+        help = "Request timeout for node requests, in seconds",
+        env = "TRANSACTION_LOGGER_REQUEST_TIMEOUT"
+    )]
+    request_timeout: u32,
+}
+
 #[derive(SerdeSerialize, Debug)]
 pub enum BorrowedDatabaseSummaryEntry<'a> {
     #[serde(rename = "Left")]
@@ -41,14 +103,14 @@ pub enum BorrowedDatabaseSummaryEntry<'a> {
 
 pub struct SummaryRow<'a> {
     /// Hash of the block the row applies to.
-    pub block_hash:   BlockHash,
+    pub block_hash: BlockHash,
     /// Slot time of the block the row applies to.
-    pub block_time:   Timestamp,
+    pub block_time: Timestamp,
     /// Block height stored in the database.
     pub block_height: AbsoluteBlockHeight,
     /// Summary of the item. Either a user-generated transaction, or a protocol
     /// event that affected the account or contract.
-    pub summary:      BorrowedDatabaseSummaryEntry<'a>,
+    pub summary: BorrowedDatabaseSummaryEntry<'a>,
 }
 
 #[repr(transparent)]
@@ -56,7 +118,9 @@ pub struct SummaryRow<'a> {
 struct AccountAddressEq(AccountAddress);
 
 impl From<AccountAddressEq> for AccountAddress {
-    fn from(aae: AccountAddressEq) -> Self { aae.0 }
+    fn from(aae: AccountAddressEq) -> Self {
+        aae.0
+    }
 }
 
 impl PartialEq for AccountAddressEq {
@@ -75,11 +139,13 @@ impl Hash for AccountAddressEq {
 }
 
 impl AsRef<AccountAddressEq> for AccountAddress {
-    fn as_ref(&self) -> &AccountAddressEq { unsafe { std::mem::transmute(self) } }
+    fn as_ref(&self) -> &AccountAddressEq {
+        unsafe { std::mem::transmute(self) }
+    }
 }
 
 struct BlockItemSummaryWithCanonicalAddresses {
-    pub(crate) summary:   BlockItemSummary,
+    pub(crate) summary: BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
     /// duplicates.
     pub(crate) addresses: Vec<AccountAddress>,
@@ -94,11 +160,11 @@ type TransactionLogData =
 /// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
     /// Insert into the summary table.
-    insert_summary:             tokio_postgres::Statement,
+    insert_summary: tokio_postgres::Statement,
     /// Insert into the account transaction index table.
-    insert_ati:                 tokio_postgres::Statement,
+    insert_ati: tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
-    insert_cti:                 tokio_postgres::Statement,
+    insert_cti: tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -142,13 +208,13 @@ RETURNING id",
             )
             .await?;
 
-        return Ok(Self {
+        Ok(Self {
             insert_summary,
             insert_ati,
             insert_cti,
             cis2_increase_total_supply,
             cis2_decrease_total_supply,
-        });
+        })
     }
 }
 
@@ -562,27 +628,37 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
-    let app = {
-        let app = SharedIndexerArgs::clap()
+    let args = {
+        let args = Args::clap()
             // .setting(AppSettings::ArgRequiredElseHelp)
             .global_setting(AppSettings::ColoredHelp);
-        let matches = app.get_matches();
-        SharedIndexerArgs::from_clap(&matches)
+        let matches = args.get_matches();
+        Args::from_clap(&matches)
     };
+
+    let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
+    log_builder.filter_module(module_path!(), args.log_level);
+    log_builder.init();
 
     let sql_schema = include_str!("../resources/schema.sql");
     let node_hooks = NodeDelegate {
         canonical_cache: HashSet::new(),
     };
-    let config_logger = |builder: &mut env_logger::Builder, log_level: log::LevelFilter| {
-        builder.filter_module(module_path!(), log_level);
+
+    let run_service_args = SharedIndexerArgs {
+        max_connect_attemps: MAX_CONNECT_ATTEMPTS,
+        max_behind: args.max_behind,
+        num_parallel: args.num_parallel,
+        connect_timeout: args.connect_timeout,
+        request_timeout: args.request_timeout,
+        db_config: args.config,
+        endpoint: args.endpoint,
     };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseDelegate, NodeDelegate>(
         sql_schema,
-        app,
+        run_service_args,
         node_hooks,
-        Some(config_logger),
     )
     .await?;
 

@@ -3,6 +3,7 @@ use std::sync::{
     Arc,
 };
 
+use anyhow::anyhow;
 use concordium_rust_sdk::{
     postgres::{self, DatabaseClient},
     types::{hashes::BlockHash, AbsoluteBlockHeight},
@@ -12,128 +13,132 @@ use structopt::StructOpt;
 use thiserror::Error;
 use tonic::{async_trait, transport::ClientTlsConfig};
 
-const MAX_CONNECT_ATTEMPTS: u64 = 6;
-
 /// A collection of variables supplied to [`run_service`]. These determine how
 /// the service runs with regards to connections to concordium node(s), db, and
 /// logging.
 #[derive(StructOpt)]
 pub struct SharedIndexerArgs {
-    #[structopt(
-        long = "node",
-        help = "GRPC interface of the node(s).",
-        default_value = "http://localhost:20000",
-        use_delimiter = true,
-        env = "TRANSACTION_LOGGER_NODES"
-    )]
-    pub endpoint:        Vec<v2::Endpoint>,
-    #[structopt(
-        long = "db",
-        default_value = "host=localhost dbname=transaction-outcome user=postgres \
-                         password=password port=5432",
-        help = "Database connection string.",
-        env = "TRANSACTION_LOGGER_DB_STRING"
-    )]
-    pub config:          postgres::Config,
-    #[structopt(
-        long = "log-level",
-        default_value = "off",
-        help = "Maximum log level.",
-        env = "TRANSACTION_LOGGER_LOG_LEVEL"
-    )]
-    pub log_level:       log::LevelFilter,
-    #[structopt(
-        long = "num-parallel",
-        default_value = "1",
-        help = "Maximum number of parallel queries to make to the node. Usually 1 is the correct \
-                number, but during initial catchup it is useful to increase this to, say 8 to \
-                take advantage of parallelism in queries.",
-        env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
-    )]
-    pub num_parallel:    u32,
-    #[structopt(
-        long = "max-behind-seconds",
-        default_value = "240",
-        help = "Maximum number of seconds the node's last finalization can be behind before the \
-                node is given up and another one is tried.",
-        env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
-    )]
-    pub max_behind:      u32,
-    #[structopt(
-        long = "connect-timeout",
-        default_value = "10",
-        help = "Connection timeout for connecting to the node, in seconds",
-        env = "TRANSACTION_LOGGER_CONNECT_TIMEOUT"
-    )]
+    pub endpoint: Vec<v2::Endpoint>,
+    pub db_config: postgres::Config,
+    pub num_parallel: u32,
+    pub max_behind: u32,
     pub connect_timeout: u32,
-    #[structopt(
-        long = "request-timeout",
-        default_value = "60",
-        help = "Request timeout for node requests, in seconds",
-        env = "TRANSACTION_LOGGER_REQUEST_TIMEOUT"
-    )]
     pub request_timeout: u32,
+    pub max_connect_attemps: u32,
 }
 
 /// Defines necessary interface to be used with [`DBConn`].
 #[async_trait]
-pub trait PrepareStatements {
+pub trait PrepareStatements: Sized {
     /// Supplies [`DatabaseClient`] with the purpose of preparing a collection
     /// of [`tokio_postgres::Statement`]s to be used when interacting with
     /// the database later in the execution.
-    async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error>
-    where
-        Self: Sized;
+    async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error>;
 }
 
 /// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 pub struct DBConn<P> {
     /// DatabaseClient to be used when interacting with the database.
-    pub client:   DatabaseClient,
-    /// A collection of prepared statements for the associtated [`client`] to be
+    pub client: DatabaseClient,
+    /// A collection of prepared statements for the associated [`client`] to be
     /// used when interacting with the database
     pub prepared: P,
 }
 
-impl<P: PrepareStatements> DBConn<P> {
-    /// Create a new database connection. If the second argument is `true` then
-    /// the table creation script will be run (see the file
-    /// `resources/schema.sql`). This script is in principle idempotent so
-    /// running it twice should be safe, but it is also needless,
-    /// so this should only be requested on a first connection on startup.
-    pub async fn create(
-        config: &postgres::Config,
-        try_run_sql: Option<&str>,
-    ) -> anyhow::Result<Self> {
-        let mut client = DatabaseClient::create(config.clone(), postgres::NoTls).await?;
+/// Factory for [`DBConn`] structs.
+struct DBConnFactory {
+    /// SQL statements to create the database. Executed when client is first created.
+    sql_schema: &'static str,
+    /// Postgres configuration used to create a database client.
+    pg_config: postgres::Config,
+    /// Whether to try running the SQL to create database tables.
+    try_create_tables: bool,
+}
 
-        if let Some(sql) = try_run_sql {
-            client.as_ref().batch_execute(sql).await?
+impl DBConnFactory {
+    fn new(sql_schema: &'static str, pg_config: postgres::Config) -> Self {
+        return Self {
+            sql_schema,
+            pg_config,
+            try_create_tables: true,
+        };
+    }
+
+    /// Create a [`DBConn`] connection, creating tables according to `self.sql_schema` once in the
+    /// lifetime of the factory (i.e. if `self.try_create_tables` is true at the time of
+    /// invocation) Should not be invoked manually, but instead `try_connect` should be used.
+    async fn get_new_conn<P: PrepareStatements>(&mut self) -> anyhow::Result<DBConn<P>> {
+        let mut client = DatabaseClient::create(self.pg_config.clone(), postgres::NoTls).await?;
+
+        // Ensure tables exist.
+        if self.try_create_tables {
+            client.as_ref().batch_execute(self.sql_schema).await?;
+            self.try_create_tables = false;
         }
 
         let prepared = P::prepare_all(&mut client).await?;
 
-        Ok(Self {
+        Ok(DBConn {
             client,
             prepared,
         })
     }
+
+    /// Try to connect to the database with exponential backoff, at most
+    /// `max_connect_attempts` times.
+    async fn try_connect<P: PrepareStatements>(
+        &mut self,
+        stop_flag: &AtomicBool,
+        max_connect_attemps: u32,
+    ) -> anyhow::Result<DBConn<P>> {
+        let mut i = 1;
+        while !stop_flag.load(Ordering::Acquire) {
+            match self.get_new_conn().await {
+                Ok(c) => return Ok(c),
+                Err(e) if i < max_connect_attemps => {
+                    let delay = std::time::Duration::from_millis(500 * (1 << i));
+                    log::error!(
+                        "Could not connect to the database due to {:#}. Reconnecting in {}ms",
+                        e,
+                        delay.as_millis()
+                    );
+                    // wait for 2^(i-1) seconds before attempting to reconnect.
+                    tokio::time::sleep(delay).await;
+                    i += 1;
+                }
+                Err(e) => {
+                    log::error!(
+                    "Could not connect to the database in {} attempts. Last attempt failed with \
+                     reason {:#}.",
+                    max_connect_attemps,
+                    e
+                );
+                    return Err(e);
+                }
+            }
+        }
+        anyhow::bail!("The node was requested to stop.")
+    }
 }
 
 impl<P> AsRef<DatabaseClient> for DBConn<P> {
-    fn as_ref(&self) -> &DatabaseClient { &self.client }
+    fn as_ref(&self) -> &DatabaseClient {
+        &self.client
+    }
 }
 
 impl<P> AsMut<DatabaseClient> for DBConn<P> {
-    fn as_mut(&mut self) -> &mut DatabaseClient { &mut self.client }
+    fn as_mut(&mut self) -> &mut DatabaseClient {
+        &mut self.client
+    }
 }
 
 /// Holds information pertaining to block insertion into database.
 pub struct BlockInsertSuccess {
     /// The time it took to insert the block.
-    pub time:         chrono::Duration,
+    pub time: chrono::Duration,
     /// The hash of the inserted block.
-    pub block_hash:   BlockHash,
+    pub block_hash: BlockHash,
     /// The height of the inserted block.
     pub block_height: AbsoluteBlockHeight,
 }
@@ -145,7 +150,7 @@ pub enum DatabaseError {
     #[error("Error using the database {0}.")]
     PostgresError(#[from] postgres::Error),
     /// Other errors while processing database data.
-    #[error("Error using the database {0}.")]
+    #[error("Error happened on database thread {0}.")]
     OtherError(#[from] anyhow::Error),
 }
 
@@ -174,16 +179,16 @@ pub enum NodeError {
     #[error("Error connecting to the node {0}.")]
     ConnectionError(tonic::transport::Error),
     /// No finalization in some time.
-    #[error("Timeout.")]
+    #[error("Connection to node timed out due to no finalized blocks.")]
     Timeout,
     /// Error establishing connection.
-    #[error("Error during query {0}.")]
+    #[error("GRPC error during node query {0}.")]
     NetworkError(#[from] v2::Status),
     /// Query error.
     #[error("Error querying the node {0}.")]
     QueryError(#[from] v2::QueryError),
     /// Query errors, etc.
-    #[error("Error querying the node {0}.")]
+    #[error("Error happened while using node {0}.")]
     OtherError(#[from] anyhow::Error),
 }
 
@@ -229,65 +234,23 @@ async fn set_shutdown(flag: Arc<AtomicBool>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Try to reconnect to the database with exponential backoff, at most
-/// [`MAX_CONNECT_ATTEMPTS`] times.
-async fn try_reconnect<P>(
-    config: &postgres::Config,
-    sql_schema: &str,
-    stop_flag: &AtomicBool,
-    create_tables: bool,
-) -> anyhow::Result<DBConn<P>>
-where
-    P: PrepareStatements, {
-    let mut i = 1;
-    let sql_opt: Option<&str> = if create_tables {
-        Some(sql_schema)
-    } else {
-        None
-    };
-
-    while !stop_flag.load(Ordering::Acquire) {
-        match DBConn::create(config, sql_opt).await {
-            Ok(c) => return Ok(c),
-            Err(e) if i < MAX_CONNECT_ATTEMPTS => {
-                let delay = std::time::Duration::from_millis(500 * (1 << i));
-                log::error!(
-                    "Could not connect to the database due to {:#}. Reconnecting in {}ms",
-                    e,
-                    delay.as_millis()
-                );
-                // wait for 2^(i-1) seconds before attempting to reconnect.
-                tokio::time::sleep(delay).await;
-                i += 1;
-            }
-            Err(e) => {
-                log::error!(
-                    "Could not connect to the database in {} attempts. Last attempt failed with \
-                     reason {:#}.",
-                    MAX_CONNECT_ATTEMPTS,
-                    e
-                );
-                return Err(e);
-            }
-        }
-    }
-    anyhow::bail!("The node was requested to stop.")
-}
-
 /// Handles database related execution, using `H` for domain-specific database
 /// queries. Will attempt to reconnect to database on errors. Runs until
 /// `stop_flag` is triggered.
 async fn write_to_db<D, P, H>(
-    config: postgres::Config,
-    sql_schema: &str,
+    pg_config: postgres::Config,
+    sql_schema: &'static str,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     mut receiver: tokio::sync::mpsc::Receiver<D>,
     stop_flag: Arc<AtomicBool>,
+    max_connect_attemps: u32,
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
-    H: DatabaseHooks<D, P>, {
-    let mut db = try_reconnect(&config, sql_schema, &stop_flag, true).await?;
+    H: DatabaseHooks<D, P>,
+{
+    let mut db_factory = DBConnFactory::new(sql_schema, pg_config);
+    let mut db = db_factory.try_connect(&stop_flag, max_connect_attemps).await?;
 
     let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
     start_from_sender
@@ -327,7 +290,8 @@ where
                         delay.as_millis()
                     );
                     tokio::time::sleep(delay).await;
-                    let new_db = match try_reconnect(&config, sql_schema, &stop_flag, false).await {
+                    let new_db = match db_factory.try_connect(&stop_flag, max_connect_attemps).await
+                    {
                         Ok(db) => db,
                         Err(e) => {
                             receiver.close();
@@ -386,7 +350,8 @@ async fn node_process<D, H>(
     hooks: &mut H,
 ) -> Result<(), NodeError>
 where
-    H: NodeHooks<D>, {
+    H: NodeHooks<D>,
+{
     // Use TLS if the URI scheme is HTTPS.
     // This uses whatever system certificates have been installed as trusted roots.
     let node_ep = if node_ep.uri().scheme().map_or(false, |x| x == &http::uri::Scheme::HTTPS) {
@@ -421,7 +386,7 @@ where
         if has_error {
             // we have processed the blocks we can, but further queries on the same stream
             // will fail since the stream signalled an error.
-            return Err(NodeError::OtherError(anyhow::anyhow!("Finalized block stream dropped.")));
+            return Err(NodeError::OtherError(anyhow!("Finalized block stream dropped.")));
         }
     }
 
@@ -437,22 +402,15 @@ pub async fn run_service<D, P, DH, NH>(
     sql_schema: &'static str,
     app_config: SharedIndexerArgs,
     mut node_hooks: NH,
-    config_logger: Option<impl FnOnce(&mut env_logger::Builder, log::LevelFilter)>,
 ) -> Result<(), anyhow::Error>
 where
-    P: PrepareStatements + Send + 'static,
+    P: PrepareStatements + Send + Sync + 'static,
     D: Send + Sync + 'static,
     DH: DatabaseHooks<D, P> + Send + Sync + 'static,
-    NH: NodeHooks<D>, {
+    NH: NodeHooks<D>,
+{
     anyhow::ensure!(!app_config.endpoint.is_empty(), "At least one node must be provided.");
-    let db_config = app_config.config;
-
-    let mut log_builder = env_logger::Builder::from_env("TRANSACTION_LOGGER_LOG");
-    log_builder.filter_module(module_path!(), app_config.log_level);
-    if let Some(config_logger) = config_logger {
-        config_logger(&mut log_builder, app_config.log_level);
-    }
-    log_builder.init();
+    let db_config = app_config.db_config;
 
     // This program is set up as follows.
     // It uses tokio to manage tasks. The reason for this is that it is the
@@ -491,6 +449,7 @@ where
         height_sender,
         receiver,
         stop_flag.clone(),
+        app_config.max_connect_attemps,
     ));
     // The height we should start querying the node at.
     // If the sender died we simply terminate the program.
