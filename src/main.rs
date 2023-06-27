@@ -21,8 +21,8 @@ use tokio_postgres::{
 };
 use tonic::async_trait;
 use transaction_logger::{
-    run_service, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError, NodeHooks,
-    PrepareStatements, SharedIndexerArgs,
+    run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
+    NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
 
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
@@ -636,6 +636,10 @@ async fn main() -> anyhow::Result<()> {
     log_builder.filter_module(module_path!(), args.log_level);
     log_builder.init();
 
+    let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel("init".to_string());
+
+    let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
+
     let sql_schema = include_str!("../resources/schema.sql");
     let node_hooks = NodeDelegate {
         canonical_cache: HashSet::new(),
@@ -654,9 +658,12 @@ async fn main() -> anyhow::Result<()> {
     run_service::<TransactionLogData, PreparedStatements, DatabaseDelegate, NodeDelegate>(
         sql_schema,
         run_service_args,
+        shutdown_receive,
         node_hooks,
     )
     .await?;
+
+    shutdown_handler_handle.abort();
 
     Ok(())
 }
