@@ -234,7 +234,7 @@ pub async fn set_shutdown(
 
 /// Handles database related execution, using `H` for domain-specific database
 /// queries. Will attempt to reconnect to database on errors. Runs until
-/// `stop_flag` is triggered.
+/// `shutdown_receiver` receives any message.
 async fn write_to_db<D, P, H>(
     pg_config: postgres::Config,
     sql_schema: &'static str,
@@ -404,7 +404,7 @@ where
 
 /// Executes service infrastructure. Handles connections to a set of nodes and a
 /// database (configured with `app_config`) on their
-/// own separate threads.
+/// own separate threads. Runs until `shutdown_receiver` receives any message.
 /// Implementation of `NH` defines hooks used by the node thread, while
 /// implementation of `DH` defines hooks used by the database thread.
 pub async fn run_service<D, P, DH, NH>(
