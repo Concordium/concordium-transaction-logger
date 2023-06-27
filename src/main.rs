@@ -29,8 +29,8 @@ type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
 const MAX_CONNECT_ATTEMPTS: u32 = 6;
 
-/// A collection on arguments necessary to run the service. These are supplied via the command
-/// line.
+/// A collection on arguments necessary to run the service. These are supplied
+/// via the command line.
 #[derive(StructOpt)]
 struct Args {
     #[structopt(
@@ -40,7 +40,7 @@ struct Args {
         use_delimiter = true,
         env = "TRANSACTION_LOGGER_NODES"
     )]
-    endpoint: Vec<v2::Endpoint>,
+    endpoint:        Vec<v2::Endpoint>,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
@@ -48,14 +48,14 @@ struct Args {
         help = "Database connection string.",
         env = "TRANSACTION_LOGGER_DB_STRING"
     )]
-    config: postgres::Config,
+    config:          postgres::Config,
     #[structopt(
         long = "log-level",
         default_value = "off",
         help = "Maximum log level.",
         env = "TRANSACTION_LOGGER_LOG_LEVEL"
     )]
-    log_level: log::LevelFilter,
+    log_level:       log::LevelFilter,
     #[structopt(
         long = "num-parallel",
         default_value = "1",
@@ -64,7 +64,7 @@ struct Args {
                 take advantage of parallelism in queries.",
         env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
     )]
-    num_parallel: u32,
+    num_parallel:    u32,
     #[structopt(
         long = "max-behind-seconds",
         default_value = "240",
@@ -72,7 +72,7 @@ struct Args {
                 node is given up and another one is tried.",
         env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
     )]
-    max_behind: u32,
+    max_behind:      u32,
     #[structopt(
         long = "connect-timeout",
         default_value = "10",
@@ -103,14 +103,14 @@ pub enum BorrowedDatabaseSummaryEntry<'a> {
 
 pub struct SummaryRow<'a> {
     /// Hash of the block the row applies to.
-    pub block_hash: BlockHash,
+    pub block_hash:   BlockHash,
     /// Slot time of the block the row applies to.
-    pub block_time: Timestamp,
+    pub block_time:   Timestamp,
     /// Block height stored in the database.
     pub block_height: AbsoluteBlockHeight,
     /// Summary of the item. Either a user-generated transaction, or a protocol
     /// event that affected the account or contract.
-    pub summary: BorrowedDatabaseSummaryEntry<'a>,
+    pub summary:      BorrowedDatabaseSummaryEntry<'a>,
 }
 
 #[repr(transparent)]
@@ -118,9 +118,7 @@ pub struct SummaryRow<'a> {
 struct AccountAddressEq(AccountAddress);
 
 impl From<AccountAddressEq> for AccountAddress {
-    fn from(aae: AccountAddressEq) -> Self {
-        aae.0
-    }
+    fn from(aae: AccountAddressEq) -> Self { aae.0 }
 }
 
 impl PartialEq for AccountAddressEq {
@@ -139,13 +137,11 @@ impl Hash for AccountAddressEq {
 }
 
 impl AsRef<AccountAddressEq> for AccountAddress {
-    fn as_ref(&self) -> &AccountAddressEq {
-        unsafe { std::mem::transmute(self) }
-    }
+    fn as_ref(&self) -> &AccountAddressEq { unsafe { std::mem::transmute(self) } }
 }
 
 struct BlockItemSummaryWithCanonicalAddresses {
-    pub(crate) summary: BlockItemSummary,
+    pub(crate) summary:   BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
     /// duplicates.
     pub(crate) addresses: Vec<AccountAddress>,
@@ -160,11 +156,11 @@ type TransactionLogData =
 /// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
     /// Insert into the summary table.
-    insert_summary: tokio_postgres::Statement,
+    insert_summary:             tokio_postgres::Statement,
     /// Insert into the account transaction index table.
-    insert_ati: tokio_postgres::Statement,
+    insert_ati:                 tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
-    insert_cti: tokio_postgres::Statement,
+    insert_cti:                 tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -647,12 +643,12 @@ async fn main() -> anyhow::Result<()> {
 
     let run_service_args = SharedIndexerArgs {
         max_connect_attemps: MAX_CONNECT_ATTEMPTS,
-        max_behind: args.max_behind,
-        num_parallel: args.num_parallel,
-        connect_timeout: args.connect_timeout,
-        request_timeout: args.request_timeout,
-        db_config: args.config,
-        endpoint: args.endpoint,
+        max_behind:          args.max_behind,
+        num_parallel:        args.num_parallel,
+        connect_timeout:     args.connect_timeout,
+        request_timeout:     args.request_timeout,
+        db_config:           args.config,
+        endpoint:            args.endpoint,
     };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseDelegate, NodeDelegate>(

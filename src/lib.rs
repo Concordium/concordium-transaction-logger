@@ -18,12 +18,12 @@ use tonic::{async_trait, transport::ClientTlsConfig};
 /// logging.
 #[derive(StructOpt)]
 pub struct SharedIndexerArgs {
-    pub endpoint: Vec<v2::Endpoint>,
-    pub db_config: postgres::Config,
-    pub num_parallel: u32,
-    pub max_behind: u32,
-    pub connect_timeout: u32,
-    pub request_timeout: u32,
+    pub endpoint:            Vec<v2::Endpoint>,
+    pub db_config:           postgres::Config,
+    pub num_parallel:        u32,
+    pub max_behind:          u32,
+    pub connect_timeout:     u32,
+    pub request_timeout:     u32,
     pub max_connect_attemps: u32,
 }
 
@@ -39,7 +39,7 @@ pub trait PrepareStatements: Sized {
 /// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 pub struct DBConn<P> {
     /// DatabaseClient to be used when interacting with the database.
-    pub client: DatabaseClient,
+    pub client:   DatabaseClient,
     /// A collection of prepared statements for the associated [`client`] to be
     /// used when interacting with the database
     pub prepared: P,
@@ -47,10 +47,11 @@ pub struct DBConn<P> {
 
 /// Factory for [`DBConn`] structs.
 struct DBConnFactory {
-    /// SQL statements to create the database. Executed when client is first created.
-    sql_schema: &'static str,
+    /// SQL statements to create the database. Executed when client is first
+    /// created.
+    sql_schema:        &'static str,
     /// Postgres configuration used to create a database client.
-    pg_config: postgres::Config,
+    pg_config:         postgres::Config,
     /// Whether to try running the SQL to create database tables.
     try_create_tables: bool,
 }
@@ -64,9 +65,10 @@ impl DBConnFactory {
         };
     }
 
-    /// Create a [`DBConn`] connection, creating tables according to `self.sql_schema` once in the
-    /// lifetime of the factory (i.e. if `self.try_create_tables` is true at the time of
-    /// invocation) Should not be invoked manually, but instead `try_connect` should be used.
+    /// Create a [`DBConn`] connection, creating tables according to
+    /// `self.sql_schema` once in the lifetime of the factory (i.e. if
+    /// `self.try_create_tables` is true at the time of invocation) Should
+    /// not be invoked manually, but instead `try_connect` should be used.
     async fn get_new_conn<P: PrepareStatements>(&mut self) -> anyhow::Result<DBConn<P>> {
         let mut client = DatabaseClient::create(self.pg_config.clone(), postgres::NoTls).await?;
 
@@ -108,11 +110,11 @@ impl DBConnFactory {
                 }
                 Err(e) => {
                     log::error!(
-                    "Could not connect to the database in {} attempts. Last attempt failed with \
-                     reason {:#}.",
-                    max_connect_attemps,
-                    e
-                );
+                        "Could not connect to the database in {} attempts. Last attempt failed \
+                         with reason {:#}.",
+                        max_connect_attemps,
+                        e
+                    );
                     return Err(e);
                 }
             }
@@ -122,23 +124,19 @@ impl DBConnFactory {
 }
 
 impl<P> AsRef<DatabaseClient> for DBConn<P> {
-    fn as_ref(&self) -> &DatabaseClient {
-        &self.client
-    }
+    fn as_ref(&self) -> &DatabaseClient { &self.client }
 }
 
 impl<P> AsMut<DatabaseClient> for DBConn<P> {
-    fn as_mut(&mut self) -> &mut DatabaseClient {
-        &mut self.client
-    }
+    fn as_mut(&mut self) -> &mut DatabaseClient { &mut self.client }
 }
 
 /// Holds information pertaining to block insertion into database.
 pub struct BlockInsertSuccess {
     /// The time it took to insert the block.
-    pub time: chrono::Duration,
+    pub time:         chrono::Duration,
     /// The hash of the inserted block.
-    pub block_hash: BlockHash,
+    pub block_hash:   BlockHash,
     /// The height of the inserted block.
     pub block_height: AbsoluteBlockHeight,
 }
@@ -247,8 +245,7 @@ async fn write_to_db<D, P, H>(
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
-    H: DatabaseHooks<D, P>,
-{
+    H: DatabaseHooks<D, P>, {
     let mut db_factory = DBConnFactory::new(sql_schema, pg_config);
     let mut db = db_factory.try_connect(&stop_flag, max_connect_attemps).await?;
 
@@ -350,8 +347,7 @@ async fn node_process<D, H>(
     hooks: &mut H,
 ) -> Result<(), NodeError>
 where
-    H: NodeHooks<D>,
-{
+    H: NodeHooks<D>, {
     // Use TLS if the URI scheme is HTTPS.
     // This uses whatever system certificates have been installed as trusted roots.
     let node_ep = if node_ep.uri().scheme().map_or(false, |x| x == &http::uri::Scheme::HTTPS) {
@@ -407,8 +403,7 @@ where
     P: PrepareStatements + Send + Sync + 'static,
     D: Send + Sync + 'static,
     DH: DatabaseHooks<D, P> + Send + Sync + 'static,
-    NH: NodeHooks<D>,
-{
+    NH: NodeHooks<D>, {
     anyhow::ensure!(!app_config.endpoint.is_empty(), "At least one node must be provided.");
     let db_config = app_config.db_config;
 
