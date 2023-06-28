@@ -496,16 +496,16 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<ci
     }
 }
 
-/// Handles database-related execution delegated from service infrastructure.
-struct DatabaseDelegate;
+/// Empty struct used for implementing [`DatabaseHooks`].
+struct DatabaseState;
 
 #[async_trait]
-impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate {
+impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     async fn insert_into_db(
         db_conn: &mut DBConn,
         (bi, item_summaries, special_events): &TransactionLogData,
     ) -> Result<BlockInsertSuccess, DatabaseError> {
-        let time = insert_block(
+        let duration = insert_block(
             db_conn,
             bi.block_hash,
             (bi.block_slot_time.timestamp_millis() as u64).into(),
@@ -516,7 +516,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
         .await?;
 
         Ok(BlockInsertSuccess {
-            time,
+            duration,
             block_height: bi.block_height,
             block_hash: bi.block_hash,
         })
@@ -530,15 +530,14 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseDelegate 
     }
 }
 
-/// Handles node-related execution delegated from service infrastructure.
-struct NodeDelegate {
-    canonical_cache: HashSet<AccountAddressEq>,
-}
+/// Holds a set of canonical account addresses already discovered while
+/// traversing the chain
+struct CanonicalAddressCache(HashSet<AccountAddressEq>);
 
 #[async_trait]
-impl NodeHooks<TransactionLogData> for NodeDelegate {
+impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
     async fn on_use_node(&mut self, client: &mut v2::Client) -> Result<(), NodeError> {
-        if self.canonical_cache.is_empty() {
+        if self.0.is_empty() {
             let accounts_response = client
                 .get_account_list(&v2::BlockIdentifier::LastFinal)
                 .await
@@ -551,7 +550,7 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
                 })
                 .await?;
 
-            self.canonical_cache = accounts;
+            self.0 = accounts;
         }
 
         Ok(())
@@ -591,7 +590,7 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
             // which is only possible to resolve by querying the node.
             let mut seen = HashSet::with_capacity(affected_addresses.len());
             for address in affected_addresses.into_iter() {
-                if let Some(addr) = self.canonical_cache.get(address.as_ref()) {
+                if let Some(addr) = self.0.get(address.as_ref()) {
                     let addr = AccountAddress::from(*addr);
                     if seen.insert(addr) {
                         addresses.push(addr);
@@ -606,7 +605,7 @@ impl NodeHooks<TransactionLogData> for NodeDelegate {
                     if seen.insert(addr) {
                         log::debug!("Discovered new address {}", addr);
                         addresses.push(addr);
-                        self.canonical_cache.insert(AccountAddressEq(addr));
+                        self.0.insert(AccountAddressEq(addr));
                     } else {
                         log::debug!("Canonical address {} already listed.", addr);
                     }
@@ -636,14 +635,11 @@ async fn main() -> anyhow::Result<()> {
     log_builder.filter_module(module_path!(), args.log_level);
     log_builder.init();
 
-    let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel("init".to_string());
-
+    let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
     let sql_schema = include_str!("../resources/transaction-logger/schema.sql");
-    let node_hooks = NodeDelegate {
-        canonical_cache: HashSet::new(),
-    };
+    let node_hooks = CanonicalAddressCache(HashSet::new());
 
     let run_service_args = SharedIndexerArgs {
         max_connect_attemps: MAX_CONNECT_ATTEMPTS,
@@ -655,7 +651,7 @@ async fn main() -> anyhow::Result<()> {
         endpoint:            args.endpoint,
     };
 
-    run_service::<TransactionLogData, PreparedStatements, DatabaseDelegate, NodeDelegate>(
+    run_service::<TransactionLogData, PreparedStatements, DatabaseState, CanonicalAddressCache>(
         sql_schema,
         run_service_args,
         shutdown_receive,
@@ -664,6 +660,5 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     shutdown_handler_handle.abort();
-
     Ok(())
 }

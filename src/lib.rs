@@ -1,17 +1,15 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use concordium_rust_sdk::{
     postgres::{self, DatabaseClient},
     types::{hashes::BlockHash, AbsoluteBlockHeight},
     v2::{self, FinalizedBlockInfo},
 };
-use structopt::StructOpt;
 use thiserror::Error;
 use tonic::{async_trait, transport::ClientTlsConfig};
 
 /// A collection of variables supplied to [`run_service`]. These determine how
 /// the service runs with regards to connections to concordium node(s), db, and
 /// logging.
-#[derive(StructOpt)]
 pub struct SharedIndexerArgs {
     pub endpoint:            Vec<v2::Endpoint>,
     pub db_config:           postgres::Config,
@@ -40,8 +38,8 @@ pub struct DBConn<P> {
     pub prepared: P,
 }
 
-/// Factory for [`DBConn`] structs.
-struct DBConnFactory {
+/// Configuration for creating database connections.
+struct DBConfiguration {
     /// SQL statements to create the database. Executed when client is first
     /// created.
     sql_schema:        &'static str,
@@ -51,7 +49,7 @@ struct DBConnFactory {
     try_create_tables: bool,
 }
 
-impl DBConnFactory {
+impl DBConfiguration {
     fn new(sql_schema: &'static str, pg_config: postgres::Config) -> Self {
         Self {
             sql_schema,
@@ -69,11 +67,17 @@ impl DBConnFactory {
 
         // Ensure tables exist.
         if self.try_create_tables {
-            client.as_ref().batch_execute(self.sql_schema).await?;
+            client
+                .as_ref()
+                .batch_execute(self.sql_schema)
+                .await
+                .with_context(|| format!("Failed to execute SQL from {}", self.sql_schema))?;
             self.try_create_tables = false;
         }
 
-        let prepared = P::prepare_all(&mut client).await?;
+        let prepared = P::prepare_all(&mut client)
+            .await
+            .context("Failed to prepate statements for db client")?;
 
         Ok(DBConn {
             client,
@@ -128,7 +132,7 @@ impl<P> AsMut<DatabaseClient> for DBConn<P> {
 /// Holds information pertaining to block insertion into database.
 pub struct BlockInsertSuccess {
     /// The time it took to insert the block.
-    pub time:         chrono::Duration,
+    pub duration:     chrono::Duration,
     /// The hash of the inserted block.
     pub block_hash:   BlockHash,
     /// The height of the inserted block.
@@ -202,9 +206,7 @@ pub trait NodeHooks<D> {
 /// Construct a future for shutdown signals (for unix: SIGINT and SIGTERM) (for
 /// windows: ctrl c and ctrl break). The signal handler is set when the future
 /// is polled and until then the default signal handler.
-pub async fn set_shutdown(
-    shutdown_sender: tokio::sync::watch::Sender<String>,
-) -> anyhow::Result<()> {
+pub async fn set_shutdown(shutdown_sender: tokio::sync::watch::Sender<()>) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use tokio::signal::unix as unix_signal;
@@ -228,14 +230,14 @@ pub async fn set_shutdown(
         futures::future::select(ctrl_break, ctrl_c).await;
     }
 
-    shutdown_sender.send("terminate".to_string())?;
+    shutdown_sender.send(())?;
     Ok(())
 }
 /// Handles database related execution, using `H` for domain-specific database
 /// queries. Will attempt to reconnect to database on errors.
 async fn use_db<D, P, H>(
     db: &mut DBConn<P>,
-    db_factory: &mut DBConnFactory,
+    db_config: &mut DBConfiguration,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     mut receiver: tokio::sync::mpsc::Receiver<D>,
     max_connect_attemps: u32,
@@ -269,7 +271,7 @@ where
                         "Processed block {} at height {} in {}ms.",
                         success.block_hash,
                         success.block_height,
-                        success.time.num_milliseconds()
+                        success.duration.num_milliseconds()
                     );
                 }
                 Err(e) => {
@@ -285,7 +287,7 @@ where
                         delay.as_millis()
                     );
                     tokio::time::sleep(delay).await;
-                    let new_db = match db_factory.try_connect(max_connect_attemps).await {
+                    let new_db = match db_config.try_connect(max_connect_attemps).await {
                         Ok(db) => db,
                         Err(e) => {
                             receiver.close();
@@ -332,24 +334,24 @@ async fn db_process<D, P, H>(
     sql_schema: &'static str,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     receiver: tokio::sync::mpsc::Receiver<D>,
-    shutdown_receiver: tokio::sync::watch::Receiver<String>,
+    shutdown_receiver: tokio::sync::watch::Receiver<()>,
     max_connect_attemps: u32,
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
     H: DatabaseHooks<D, P>, {
-    let mut db_factory = DBConnFactory::new(sql_schema, pg_config);
+    let mut db_config = DBConfiguration::new(sql_schema, pg_config);
 
     let mut sr = shutdown_receiver.clone();
     let mut db = tokio::select! {
         _ = sr.changed() => anyhow::bail!("Service shut down manually"),
-        db_res = db_factory.try_connect(max_connect_attemps) => db_res?
+        db_res = db_config.try_connect(max_connect_attemps) => db_res?
     };
 
     let mut sr = shutdown_receiver.clone();
     tokio::select! {
         _ = sr.changed() => (),
-        res = use_db::<D, P, H>(&mut db, &mut db_factory, start_from_sender, receiver, max_connect_attemps) => res?
+        res = use_db::<D, P, H>(&mut db, &mut db_config, start_from_sender, receiver, max_connect_attemps) => res?
     };
 
     // stop the database connection.
@@ -419,7 +421,7 @@ where
 pub async fn run_service<D, P, DH, NH>(
     sql_schema: &'static str,
     app_config: SharedIndexerArgs,
-    mut shutdown_receiver: tokio::sync::watch::Receiver<String>,
+    mut shutdown_receiver: tokio::sync::watch::Receiver<()>,
     mut node_hooks: NH,
 ) -> Result<(), anyhow::Error>
 where
