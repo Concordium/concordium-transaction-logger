@@ -640,7 +640,7 @@ async fn main() -> anyhow::Result<()> {
 
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
-    let sql_schema = include_str!("../resources/schema.sql");
+    let sql_schema = include_str!("../resources/transaction-logger/schema.sql");
     let node_hooks = NodeDelegate {
         canonical_cache: HashSet::new(),
     };
