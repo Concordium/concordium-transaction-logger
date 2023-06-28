@@ -1,3 +1,5 @@
+-- Executed if configuration includes tracking of any contracts
+
 -- Table of all tracked contracts. Only keps as a reference for tables with relations to contracts.
 CREATE TABLE IF NOT EXISTS contracts (
   index INT8 NOT NULL,

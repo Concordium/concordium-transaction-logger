@@ -1,3 +1,5 @@
+-- Executed if configuration includes tracking of any accounts
+
 -- Table of all tracked accounts. Only kept as a reference for tables with relations to accounts
 CREATE TABLE IF NOT EXISTS accounts (
   address BYTEA PRIMARY KEY

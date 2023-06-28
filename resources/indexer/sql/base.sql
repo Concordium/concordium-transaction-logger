@@ -1,3 +1,5 @@
+-- Executed for any configuration
+
 -- Table of all tracked tranasction summaries.
 CREATE TABLE IF NOT EXISTS summaries (
   id SERIAL8 PRIMARY KEY,

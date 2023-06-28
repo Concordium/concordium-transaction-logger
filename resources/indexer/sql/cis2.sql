@@ -1,3 +1,5 @@
+-- Executed if configuration includes tracking of any contracts with "CIS2" being part of its list of tagged standards
+
 -- Table of CIS2 tokens.
 CREATE TABLE IF NOT EXISTS cis2_tokens (
   id SERIAL8 PRIMARY KEY,
