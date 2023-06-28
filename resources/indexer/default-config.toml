@@ -27,7 +27,7 @@
 tracked_accounts = "Selected" # Optional (default "Selected"). Options: "All" | "Selected".
 tracked_transactions = "All" # Optional (default "All"). Options: "All" |  { Selected [<tx_type_1>, ...] } |  "None". Used as default for [[accounts]].transactions. Transaction types assumed to be integers corresponding to "Supported transaction types".
 tracked_contracts = "Selected" # Optional (default "Selected"). Options: "All" |  "Selected". "All" means parse all events if schema is available, no standard (`[[contracts]].standard`) interpretations for all contracts.
-track_from = "None" # Optional (default "None"). Options: { Date [<date>] } |  { Height [<integer>] } |  { BlockHash [<hex_string>] } |  "None". In the case of "None" the service will attempt to determine a sensible starting point based on the configuration.
+# track_from = { Date [<date>] } |  { Height [<integer>] } |  { BlockHash [<hex_string>] } # Optional. If not specified, the service will attempt to determine a sensible starting point based on the configuration.
 
 # list of accounts to track (when `tracked_accounts = "Selected"`)
 # [[accounts]]
