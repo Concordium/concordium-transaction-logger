@@ -232,14 +232,105 @@ pub async fn set_shutdown(
     Ok(())
 }
 
+async fn use_db<D, P, H>(
+    db: &mut DBConn<P>,
+    db_factory: &mut DBConnFactory,
+    start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
+    mut receiver: tokio::sync::mpsc::Receiver<D>,
+    max_connect_attemps: u32,
+) -> anyhow::Result<()>
+where
+    P: PrepareStatements,
+    H: DatabaseHooks<D, P>, {
+    let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
+
+    start_from_sender
+        .send(start_from)
+        .map_err(|_| anyhow::anyhow!("Cannot send start height value to the node worker."))?;
+
+    let mut retry = None;
+    // How many successive insertion errors were encountered.
+    // This is used to slow down attempts to not spam the database
+    let mut successive_errors = 0;
+
+    loop {
+        let next_item = if let Some(v) = retry.take() {
+            Some(v)
+        } else {
+            receiver.recv().await
+        };
+
+        if let Some(data) = next_item {
+            match H::insert_into_db(db, &data).await {
+                Ok(success) => {
+                    successive_errors = 0;
+                    log::info!(
+                        "Processed block {} at height {} in {}ms.",
+                        success.block_hash,
+                        success.block_height,
+                        success.time.num_milliseconds()
+                    );
+                }
+                Err(e) => {
+                    successive_errors += 1;
+                    // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
+                    // The reason for the min is that we bound the time between reconnects.
+                    let delay = std::time::Duration::from_millis(
+                        500 * (1 << std::cmp::min(successive_errors, 8)),
+                    );
+                    log::error!(
+                        "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
+                        e,
+                        delay.as_millis()
+                    );
+                    tokio::time::sleep(delay).await;
+                    let new_db = match db_factory.try_connect(max_connect_attemps).await {
+                        Ok(db) => db,
+                        Err(e) => {
+                            receiver.close();
+                            return Err(e);
+                        }
+                    };
+                    // and drop the old database.
+                    let old_db = std::mem::replace(db, new_db);
+                    match old_db.client.stop().await {
+                        Ok(v) => {
+                            if let Err(e) = v {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection due to: \
+                                     {}.",
+                                    e
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            if e.is_panic() {
+                                log::warn!(
+                                    "Could not correctly stop the old database connection. The \
+                                     connection thread panicked."
+                                );
+                            } else {
+                                log::warn!("Could not correctly stop the old database connection.");
+                            }
+                        }
+                    }
+                    retry = Some(data);
+                }
+            };
+        } else {
+            return Ok(());
+        }
+    }
+}
+
 /// Handles database related execution, using `H` for domain-specific database
 /// queries. Will attempt to reconnect to database on errors. Runs until
 /// `shutdown_receiver` receives any message.
-async fn write_to_db<D, P, H>(
+async fn db_process<D, P, H>(
     pg_config: postgres::Config,
     sql_schema: &'static str,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
-    mut receiver: tokio::sync::mpsc::Receiver<D>,
+    receiver: tokio::sync::mpsc::Receiver<D>,
     shutdown_receiver: tokio::sync::watch::Receiver<String>,
     max_connect_attemps: u32,
 ) -> anyhow::Result<()>
@@ -251,97 +342,14 @@ where
     let mut sr = shutdown_receiver.clone();
     let mut db = tokio::select! {
         _ = sr.changed() => anyhow::bail!("Service shut down manually"),
-        db_res = db_factory.try_connect(max_connect_attemps) => {
-            let db = db_res?;
-            let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
-
-            start_from_sender
-                .send(start_from)
-                .map_err(|_| anyhow::anyhow!("Cannot send start height value to the node worker."))?;
-
-            db
-        }
+        db_res = db_factory.try_connect(max_connect_attemps) => db_res?
     };
-
-    let mut retry = None;
-    // How many successive insertion errors were encountered.
-    // This is used to slow down attempts to not spam the database
-    let mut successive_errors = 0;
 
     let mut sr = shutdown_receiver.clone();
     tokio::select! {
-        _ = sr.changed() => Ok(()),
-        res = async {
-            loop {
-                let next_item = if let Some(v) = retry.take() {
-                    Some(v)
-                } else {
-                    receiver.recv().await
-                };
-
-                if let Some(data) = next_item {
-                    match H::insert_into_db(&mut db, &data).await {
-                        Ok(success) => {
-                            successive_errors = 0;
-                            log::info!(
-                                "Processed block {} at height {} in {}ms.",
-                                success.block_hash,
-                                success.block_height,
-                                success.time.num_milliseconds()
-                            );
-                        }
-                        Err(e) => {
-                            successive_errors += 1;
-                            // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
-                            // The reason for the min is that we bound the time between reconnects.
-                            let delay = std::time::Duration::from_millis(
-                                500 * (1 << std::cmp::min(successive_errors, 8)),
-                            );
-                            log::error!(
-                                "Database connection lost due to {:#}. Will attempt to reconnect in {}ms.",
-                                e,
-                                delay.as_millis()
-                            );
-                            tokio::time::sleep(delay).await;
-                            let new_db = match db_factory.try_connect(max_connect_attemps).await {
-                                Ok(db) => db,
-                                Err(e) => {
-                                    receiver.close();
-                                    return Err(e);
-                                }
-                            };
-                            // and drop the old database.
-                            let old_db = std::mem::replace(&mut db, new_db);
-                            match old_db.client.stop().await {
-                                Ok(v) => {
-                                    if let Err(e) = v {
-                                        log::warn!(
-                                            "Could not correctly stop the old database connection due to: \
-                                                     {}.",
-                                            e
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    if e.is_panic() {
-                                        log::warn!(
-                                            "Could not correctly stop the old database connection. The \
-                                                     connection thread panicked."
-                                        );
-                                    } else {
-                                        log::warn!("Could not correctly stop the old database connection.");
-                                    }
-                                }
-                            }
-                            retry = Some(data);
-                        }
-                    };
-                } else {
-                    return Ok(())
-                }
-            }
-        } => res
-    }?;
+        _ = sr.changed() => (),
+        res = use_db::<D, P, H>(&mut db, &mut db_factory, start_from_sender, receiver, max_connect_attemps) => res?
+    };
 
     // stop the database connection.
     db.client.stop().await??;
@@ -448,7 +456,7 @@ where
     // transactions.
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
 
-    let db_write_handle = tokio::spawn(write_to_db::<D, P, DH>(
+    let db_write_handle = tokio::spawn(db_process::<D, P, DH>(
         db_config,
         sql_schema,
         height_sender,
