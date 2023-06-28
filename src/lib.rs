@@ -231,7 +231,8 @@ pub async fn set_shutdown(
     shutdown_sender.send("terminate".to_string())?;
     Ok(())
 }
-
+/// Handles database related execution, using `H` for domain-specific database
+/// queries. Will attempt to reconnect to database on errors.
 async fn use_db<D, P, H>(
     db: &mut DBConn<P>,
     db_factory: &mut DBConnFactory,
@@ -323,9 +324,9 @@ where
     }
 }
 
-/// Handles database related execution, using `H` for domain-specific database
-/// queries. Will attempt to reconnect to database on errors. Runs until
-/// `shutdown_receiver` receives any message.
+/// Runs process handling db related execution, constructing database
+/// connections using supplied configuration. Runs until `shutdown_receiver`
+/// receives any message.
 async fn db_process<D, P, H>(
     pg_config: postgres::Config,
     sql_schema: &'static str,
