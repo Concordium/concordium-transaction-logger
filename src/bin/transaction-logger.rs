@@ -624,9 +624,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = {
-        let args = Args::clap()
-            // .setting(AppSettings::ArgRequiredElseHelp)
-            .global_setting(AppSettings::ColoredHelp);
+        let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };
@@ -638,7 +636,7 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
-    let sql_schema = include_str!("../resources/transaction-logger/schema.sql");
+    let sql_schema = include_str!("../../resources/transaction-logger/schema.sql");
     let node_hooks = CanonicalAddressCache(HashSet::new());
 
     let run_service_args = SharedIndexerArgs {

@@ -21,3 +21,4 @@ tonic = {version = "0.8", features = ["tls", "tls-roots"]} # Use system trust ro
 serde = { version = "1", features = ["derive"] }
 futures = "0.3"
 async-trait = "0.1.68"
+toml = "0.7.5"

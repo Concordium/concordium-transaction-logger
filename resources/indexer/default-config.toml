@@ -24,17 +24,17 @@
 # Supported standard ID's
 # "CIS2"
 
-tracked_accounts = "Selected" # Optional (default "Selected"). Options: "All" | "Selected".
+tracked_accounts = "Declared" # Optional (default "Declared"). Options: "All" | "Declared".
 tracked_transactions = "All" # Optional (default "All"). Options: "All" |  { Selected [<tx_type_1>, ...] } |  "None". Used as default for [[accounts]].transactions. Transaction types assumed to be integers corresponding to "Supported transaction types".
-tracked_contracts = "Selected" # Optional (default "Selected"). Options: "All" |  "Selected". "All" means parse all events if schema is available, no standard (`[[contracts]].standard`) interpretations for all contracts.
+tracked_contracts = "Declared" # Optional (default "Declared"). Options: "All" |  "Declared". "All" means parse all events if schema is available, no standard (`[[contracts]].standard`) interpretations for all contracts.
 # track_from = { Date [<date>] } |  { Height [<integer>] } |  { BlockHash [<hex_string>] } # Optional. If not specified, the service will attempt to determine a sensible starting point based on the configuration.
 
-# list of accounts to track (when `tracked_accounts = "Selected"`)
+# list of accounts to track (when `tracked_accounts = "Declared"`)
 # [[accounts]]
 # address = <base58 string> # Required
 # transactions = "All" | { Selected [<tx_type_1>, ...] } | "None" # Optional. Defaults to value of `tracked_transactions`. Options: same as `tracked_transactions`.
 
-# list of contracts to track (when `tracked_contracts = "Selected"`)
+# list of contracts to track (when `tracked_contracts = "Declared"`)
 # [[contracts]]
 # index = <integer> # Required
 # subindex = <integer> # Optional (default 0).
