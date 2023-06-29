@@ -1,16 +1,9 @@
-use core::fmt;
-use std::{fs, str::FromStr};
+use std::fs;
 
 use anyhow::Context;
-use base64::{engine::general_purpose, Engine as _};
 use clap::AppSettings;
-use concordium_rust_sdk::smart_contracts::common::{
-    schema::VersionedModuleSchema, AccountAddress, Cursor, Deserial,
-};
-use serde::{
-    de::{self, Visitor},
-    Deserialize,
-};
+use concordium_rust_sdk::smart_contracts::common::{schema::VersionedModuleSchema, AccountAddress};
+use serde::Deserialize;
 use structopt::StructOpt;
 use toml::value::Datetime;
 
@@ -65,52 +58,39 @@ struct TrackedAccount {
 }
 
 /// Supported CIS's
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, PartialEq)]
 enum SupportedStandards {
     /// CIS-2 standard
     CIS2,
 }
 
 /// [`VersionedModuleSchema`] newtype
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
+#[serde(try_from = "String")]
 struct ModuleSchema(VersionedModuleSchema);
 
-impl FromStr for ModuleSchema {
-    type Err = anyhow::Error;
+impl TryFrom<String> for ModuleSchema {
+    type Error = anyhow::Error;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes: Vec<u8> = general_purpose::STANDARD_NO_PAD
-            .decode(s)
-            .context("Failed to decode string as base64")?;
-        let mut cursor = Cursor::new(bytes);
-        let schema = VersionedModuleSchema::deserial(&mut cursor)
-            .context("Failed to deserialize base64 string as VersionedModuleSchema")?;
-        Ok(ModuleSchema(schema))
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let schema = VersionedModuleSchema::from_base64_str(&value)
+            .context("Failed parsing VersionedModuleSchema from provided base64 string")?
+            .into();
+        Ok(schema)
     }
 }
 
-/// To make it possible to specify a module schema as base64 in [`Config`]
-impl<'de> Deserialize<'de> for ModuleSchema {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>, {
-        struct Base64Visitor;
-
-        impl<'de> Visitor<'de> for Base64Visitor {
-            type Value = ModuleSchema;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                write!(formatter, "A base64 string.")
-            }
-
-            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-                v.parse::<ModuleSchema>()
-                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))
-            }
-        }
-        deserializer.deserialize_str(Base64Visitor)
-    }
+impl From<VersionedModuleSchema> for ModuleSchema {
+    fn from(value: VersionedModuleSchema) -> Self { ModuleSchema(value) }
 }
+
+impl AsRef<VersionedModuleSchema> for ModuleSchema {
+    fn as_ref(&self) -> &VersionedModuleSchema { &self.0 }
+}
+
+fn default_tracked_contract_subindex() -> u64 { 0 }
+
+fn default_tracked_contract_standards() -> Vec<SupportedStandards> { Vec::new() }
 
 /// Configuration of a tracked smart contract
 #[derive(Deserialize, Debug)]
@@ -118,7 +98,8 @@ struct TrackedContract {
     /// Index of the contract
     index:     u64,
     /// Subindex of the contract. Defaults to 0.
-    subindex:  Option<u64>,
+    #[serde(default = "default_tracked_contract_subindex")]
+    subindex:  u64,
     /// Schema of the contract. If not specified, an attempt to get it from
     /// chain will be made.
     schema:    Option<ModuleSchema>,
@@ -126,29 +107,40 @@ struct TrackedContract {
     /// specified as strings corresponding to the event names specified in
     /// the contract.
     events:    Option<Vec<String>>,
-    /// Standards to apply to the contract.
-    standards: Option<Vec<SupportedStandards>>,
+    /// Standards to apply to the contract. If not specified, no standards are
+    /// applied.
+    #[serde(default = "default_tracked_contract_standards")]
+    standards: Vec<SupportedStandards>,
 }
+
+fn default_config_accounts() -> Vec<TrackedAccount> { Vec::new() }
+
+fn default_config_contracts() -> Vec<TrackedContract> { Vec::new() }
 
 /// Structure of the configuration expected from the configuration file.
 #[derive(Deserialize, Debug)]
 struct Config {
     /// Which accounts to track. Defaults to [`TrackedAddresses::Declared`]
-    tracked_accounts:     Option<TrackedAddresses>,
+    #[serde(default)]
+    tracked_accounts:     TrackedAddresses,
     /// Which contracts to track. Defaults to [`TrackedAddresses::Declared`]
-    tracked_contracts:    Option<TrackedAddresses>,
+    #[serde(default)]
+    tracked_contracts:    TrackedAddresses,
     /// Which transactions to track. Defaults to [`TrackedTransactions::All`]
-    tracked_transactions: Option<TrackedTransactions>,
+    #[serde(default)]
+    tracked_transactions: TrackedTransactions,
     /// When to start tracking from. If not specified, the service will try to
     /// figure out the earliest possible time to track from, which includes
     /// everything specified in the configuration.
     track_from:           Option<TrackFrom>,
     /// Accounts to track if `tracked_accounts` is set to
     /// [`TrackedAddresses::Declared`]
-    accounts:             Option<Vec<TrackedAccount>>,
+    #[serde(default = "default_config_accounts")]
+    accounts:             Vec<TrackedAccount>,
     /// Contracts to track if `tracked_contracts` is set to
     /// [`TrackedAddresses::Declared`]
-    contracts:            Option<Vec<TrackedContract>>,
+    #[serde(default = "default_config_contracts")]
+    contracts:            Vec<TrackedContract>,
 }
 
 /// A collection on arguments necessary to run the service. These are supplied
@@ -164,6 +156,39 @@ struct Args {
     config_file: String,
 }
 
+fn build_sql_schema(config: &Config) -> String {
+    let base_sql = include_str!("../../resources/indexer/sql/base.sql");
+
+    let mut schema = String::from(base_sql);
+
+    let needs_accounts = match config.tracked_accounts {
+        TrackedAddresses::All => true,
+        TrackedAddresses::Declared => !config.accounts.is_empty(),
+    };
+    if needs_accounts {
+        let accounts_sql = include_str!("../../resources/indexer/sql/accounts.sql");
+        schema.push_str(accounts_sql);
+    }
+
+    let needs_contracts = match config.tracked_contracts {
+        TrackedAddresses::All => true,
+        TrackedAddresses::Declared => !config.contracts.is_empty(),
+    };
+    if needs_contracts {
+        let contracts_sql = include_str!("../../resources/indexer/sql/contracts.sql");
+        schema.push_str(contracts_sql);
+    }
+
+    let needs_cis2 = needs_contracts
+        && config.contracts.iter().any(|c| c.standards.contains(&SupportedStandards::CIS2));
+    if needs_cis2 {
+        let cis2_sql = include_str!("../../resources/indexer/sql/cis2.sql");
+        schema.push_str(cis2_sql);
+    }
+
+    schema
+}
+
 fn main() -> anyhow::Result<()> {
     let args = {
         let args = Args::clap().global_setting(AppSettings::ColoredHelp);
@@ -176,7 +201,10 @@ fn main() -> anyhow::Result<()> {
     let config: Config =
         toml::from_str(&config_file).context("Could not parse TOML configuration from ")?;
 
+    let sql_schema = build_sql_schema(&config);
+
     println!("{:#?}", config);
+    println!("{}", sql_schema);
 
     Ok(())
 }
