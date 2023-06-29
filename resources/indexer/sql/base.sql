@@ -1,6 +1,6 @@
 -- Executed for any configuration
 
--- Table of all tracked tranasction summaries.
+-- Table of all tracked transaction summaries.
 CREATE TABLE IF NOT EXISTS summaries (
   id SERIAL8 PRIMARY KEY,
   block BYTEA NOT NULL,

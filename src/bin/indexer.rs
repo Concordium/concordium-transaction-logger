@@ -184,8 +184,8 @@ fn build_sql_schema(config: &Config) -> String {
         schema.push_str(contracts_sql);
     }
 
-    let needs_cis2 = needs_contracts
-        && config.contracts.iter().any(|c| c.standards.contains(&SupportedStandards::CIS2));
+    let needs_cis2 =
+        config.contracts.iter().any(|c| c.standards.contains(&SupportedStandards::CIS2));
     if needs_cis2 {
         let cis2_sql = include_str!("../../resources/indexer/sql/cis2.sql");
         schema.push_str(cis2_sql);
