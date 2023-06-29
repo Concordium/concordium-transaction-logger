@@ -88,8 +88,10 @@ impl AsRef<VersionedModuleSchema> for ModuleSchema {
     fn as_ref(&self) -> &VersionedModuleSchema { &self.0 }
 }
 
+/// Default value for `subindex` field on [`TrackedContract`]
 fn default_tracked_contract_subindex() -> u64 { 0 }
 
+/// Default value for `standards` field on [`TrackedContract`]
 fn default_tracked_contract_standards() -> Vec<SupportedStandards> { Vec::new() }
 
 /// Configuration of a tracked smart contract
@@ -113,8 +115,10 @@ struct TrackedContract {
     standards: Vec<SupportedStandards>,
 }
 
+/// Default value for `accounts` field on [`Config`]
 fn default_config_accounts() -> Vec<TrackedAccount> { Vec::new() }
 
+/// Default value for `contracts` field on [`Config`]
 fn default_config_contracts() -> Vec<TrackedContract> { Vec::new() }
 
 /// Structure of the configuration expected from the configuration file.
@@ -156,6 +160,7 @@ struct Args {
     config_file: String,
 }
 
+/// Builds an sql schema conditionally depending on the `config` passed
 fn build_sql_schema(config: &Config) -> String {
     let base_sql = include_str!("../../resources/indexer/sql/base.sql");
 
