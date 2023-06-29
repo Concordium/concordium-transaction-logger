@@ -2697,6 +2697,7 @@ version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.21.2",
  "chrono",
  "clap",
  "concordium-rust-sdk",

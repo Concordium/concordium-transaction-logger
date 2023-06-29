@@ -1,9 +1,16 @@
-use std::fs;
+use core::fmt;
+use std::{fs, str::FromStr};
 
 use anyhow::Context;
+use base64::{engine::general_purpose, Engine as _};
 use clap::AppSettings;
-use concordium_rust_sdk::smart_contracts::common::AccountAddress;
-use serde::Deserialize;
+use concordium_rust_sdk::smart_contracts::common::{
+    schema::VersionedModuleSchema, AccountAddress, Cursor, Deserial,
+};
+use serde::{
+    de::{self, Visitor},
+    Deserialize,
+};
 use structopt::StructOpt;
 use toml::value::Datetime;
 
@@ -64,6 +71,47 @@ enum SupportedStandards {
     CIS2,
 }
 
+/// [`VersionedModuleSchema`] newtype
+#[derive(Debug)]
+struct ModuleSchema(VersionedModuleSchema);
+
+impl FromStr for ModuleSchema {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes: Vec<u8> = general_purpose::STANDARD_NO_PAD
+            .decode(s)
+            .context("Failed to decode string as base64")?;
+        let mut cursor = Cursor::new(bytes);
+        let schema = VersionedModuleSchema::deserial(&mut cursor)
+            .context("Failed to deserialize base64 string as VersionedModuleSchema")?;
+        Ok(ModuleSchema(schema))
+    }
+}
+
+/// To make it possible to specify a module schema as base64 in [`Config`]
+impl<'de> Deserialize<'de> for ModuleSchema {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>, {
+        struct Base64Visitor;
+
+        impl<'de> Visitor<'de> for Base64Visitor {
+            type Value = ModuleSchema;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                write!(formatter, "A base64 string.")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                v.parse::<ModuleSchema>()
+                    .map_err(|_| de::Error::invalid_value(de::Unexpected::Str(v), &self))
+            }
+        }
+        deserializer.deserialize_str(Base64Visitor)
+    }
+}
+
 /// Configuration of a tracked smart contract
 #[derive(Deserialize, Debug)]
 struct TrackedContract {
@@ -73,7 +121,7 @@ struct TrackedContract {
     subindex:  Option<u64>,
     /// Schema of the contract. If not specified, an attempt to get it from
     /// chain will be made.
-    schema:    Option<String>,
+    schema:    Option<ModuleSchema>,
     /// Contract events to parse. Defaults to all events. These should be
     /// specified as strings corresponding to the event names specified in
     /// the contract.
