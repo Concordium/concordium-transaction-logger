@@ -7,8 +7,8 @@ CREATE TABLE IF NOT EXISTS summaries (
   timestamp INT8 NOT NULL,
   height INT8 NOT NULL, -- To know where to start from on restart.
   type INT2 NOT NULL, -- To facilitate more flexible querying.
-  summary JSONB NOT NULL
-  data JSONB, -- Optional, parsed from transactions of type "RegisterData".
+  summary JSONB NOT NULL,
+  data JSONB -- Optional, parsed from transactions of type "RegisterData".
 );
 
 -- Table of active configuration used for the service.
