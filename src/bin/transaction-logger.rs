@@ -502,6 +502,7 @@ struct DatabaseState;
 #[async_trait]
 impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     async fn insert_into_db(
+        &self,
         db_conn: &mut DBConn,
         (bi, item_summaries, special_events): &TransactionLogData,
     ) -> Result<BlockInsertSuccess, DatabaseError> {
@@ -523,6 +524,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     }
 
     async fn on_request_max_height(
+        &self,
         db: &DatabaseClient,
     ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError> {
         let height = get_last_block_height(db).await?;
@@ -636,8 +638,9 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
-    let sql_schema = include_str!("../../resources/transaction-logger/schema.sql");
+    let sql_schema = include_str!("../../resources/transaction-logger/schema.sql").to_string();
     let node_hooks = CanonicalAddressCache(HashSet::new());
+    let db_hooks = DatabaseState;
 
     let run_service_args = SharedIndexerArgs {
         max_connect_attemps: MAX_CONNECT_ATTEMPTS,
@@ -654,6 +657,7 @@ async fn main() -> anyhow::Result<()> {
         run_service_args,
         shutdown_receive,
         node_hooks,
+        db_hooks,
     )
     .await?;
 

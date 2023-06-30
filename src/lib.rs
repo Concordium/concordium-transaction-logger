@@ -42,7 +42,7 @@ pub struct DBConn<P> {
 struct DBConfiguration {
     /// SQL statements to create the database. Executed when client is first
     /// created.
-    sql_schema:        &'static str,
+    sql_schema:        String,
     /// Postgres configuration used to create a database client.
     pg_config:         postgres::Config,
     /// Whether to try running the SQL to create database tables.
@@ -50,7 +50,7 @@ struct DBConfiguration {
 }
 
 impl DBConfiguration {
-    fn new(sql_schema: &'static str, pg_config: postgres::Config) -> Self {
+    fn new(sql_schema: String, pg_config: postgres::Config) -> Self {
         Self {
             sql_schema,
             pg_config,
@@ -69,7 +69,7 @@ impl DBConfiguration {
         if self.try_create_tables {
             client
                 .as_ref()
-                .batch_execute(self.sql_schema)
+                .batch_execute(&self.sql_schema)
                 .await
                 .with_context(|| format!("Failed to execute SQL from {}", self.sql_schema))?;
             self.try_create_tables = false;
@@ -156,6 +156,7 @@ pub trait DatabaseHooks<D, P> {
     /// Invoked by database thread every time a block has been received to be
     /// inserted into the database.
     async fn insert_into_db(
+        &self,
         db_conn: &mut DBConn<P>,
         data: &D,
     ) -> Result<BlockInsertSuccess, DatabaseError>;
@@ -163,8 +164,14 @@ pub trait DatabaseHooks<D, P> {
     /// Invoked by the database thread to request the latest recorded height in
     /// the database.
     async fn on_request_max_height(
+        &self,
         db: &DatabaseClient,
     ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError>;
+
+    /// Invoked when database client is created.
+    async fn on_create_client(&self, db_client: &DatabaseClient) -> Result<(), DatabaseError> {
+        Ok(())
+    }
 }
 
 /// A collection of possible errors that can happen while using the node to
@@ -241,11 +248,12 @@ async fn use_db<D, P, H>(
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     mut receiver: tokio::sync::mpsc::Receiver<D>,
     max_connect_attemps: u32,
+    hooks: &H,
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
     H: DatabaseHooks<D, P>, {
-    let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
+    let start_from = hooks.on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
 
     start_from_sender
         .send(start_from)
@@ -264,7 +272,7 @@ where
         };
 
         if let Some(data) = next_item {
-            match H::insert_into_db(db, &data).await {
+            match hooks.insert_into_db(db, &data).await {
                 Ok(success) => {
                     successive_errors = 0;
                     log::info!(
@@ -331,11 +339,12 @@ where
 /// receives any message.
 async fn db_process<D, P, H>(
     pg_config: postgres::Config,
-    sql_schema: &'static str,
+    sql_schema: String,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     receiver: tokio::sync::mpsc::Receiver<D>,
     shutdown_receiver: tokio::sync::watch::Receiver<()>,
     max_connect_attemps: u32,
+    hooks: H,
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
@@ -351,7 +360,7 @@ where
     let mut sr = shutdown_receiver.clone();
     tokio::select! {
         _ = sr.changed() => (),
-        res = use_db::<D, P, H>(&mut db, &mut db_config, start_from_sender, receiver, max_connect_attemps) => res?
+        res = use_db(&mut db, &mut db_config, start_from_sender, receiver, max_connect_attemps, &hooks) => res?
     };
 
     // stop the database connection.
@@ -418,11 +427,12 @@ where
 /// own separate threads. Runs until `shutdown_receiver` receives any message.
 /// Implementation of `NH` defines hooks used by the node thread, while
 /// implementation of `DH` defines hooks used by the database thread.
-pub async fn run_service<D, P, DH, NH>(
-    sql_schema: &'static str,
+pub async fn run_service<'a, D, P, DH, NH>(
+    sql_schema: String,
     app_config: SharedIndexerArgs,
     mut shutdown_receiver: tokio::sync::watch::Receiver<()>,
     mut node_hooks: NH,
+    db_hooks: DH,
 ) -> Result<(), anyhow::Error>
 where
     P: PrepareStatements + Send + Sync + 'static,
@@ -466,6 +476,7 @@ where
         receiver,
         shutdown_receiver.clone(),
         app_config.max_connect_attemps,
+        db_hooks,
     ));
     // The height we should start querying the node at.
     // If the sender died we simply terminate the program.

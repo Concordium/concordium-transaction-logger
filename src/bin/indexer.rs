@@ -1,11 +1,21 @@
 use std::fs;
 
 use anyhow::Context;
+use async_trait::async_trait;
 use clap::AppSettings;
-use concordium_rust_sdk::smart_contracts::common::{schema::VersionedModuleSchema, AccountAddress};
+use concordium_rust_sdk::{
+    postgres::{self, DatabaseClient},
+    smart_contracts::common::{schema::VersionedModuleSchema, AccountAddress},
+    types::AbsoluteBlockHeight,
+    v2::{self, FinalizedBlockInfo},
+};
 use serde::Deserialize;
 use structopt::StructOpt;
 use toml::value::Datetime;
+use transaction_logger::{
+    run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
+    NodeHooks, PrepareStatements, SharedIndexerArgs,
+};
 
 /// Used to configure which transactions to track
 #[derive(Deserialize, Debug)]
@@ -158,6 +168,107 @@ struct Args {
         env = "INDEXER_CONFIG_FILE"
     )]
     config_file: String,
+    #[structopt(
+        long = "node",
+        help = "GRPC interface of the node(s).",
+        default_value = "http://localhost:20002",
+        use_delimiter = true,
+        env = "TRANSACTION_LOGGER_NODES"
+    )]
+    endpoint:    Vec<v2::Endpoint>,
+    #[structopt(
+        long = "db",
+        default_value = "host=localhost dbname=indexer user=postgres password=password port=5432",
+        help = "Database connection string.",
+        env = "INDEXER_LOGGER_DB_STRING"
+    )]
+    db_config:   postgres::Config,
+    #[structopt(
+        long = "log-level",
+        default_value = "off",
+        help = "Maximum log level.",
+        env = "INDEXER_LOGGER_LOG_LEVEL"
+    )]
+    log_level:   log::LevelFilter,
+}
+
+type DBConn = transaction_logger::DBConn<PreparedStatements>;
+
+struct BlockData;
+
+struct PreparedStatements;
+
+#[async_trait]
+impl PrepareStatements for PreparedStatements {
+    async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error> {
+        println!("prepare_all");
+        todo!()
+    }
+}
+
+struct DatabaseState<'a> {
+    config_hash: &'a [u8],
+}
+
+#[async_trait]
+impl<'a> DatabaseHooks<BlockData, PreparedStatements> for DatabaseState<'a> {
+    async fn on_request_max_height(
+        &self,
+        db: &DatabaseClient,
+    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError> {
+        let height = get_last_block_height(db).await?;
+        Ok(height)
+    }
+
+    async fn insert_into_db(
+        &self,
+        db_conn: &mut DBConn,
+        bd: &BlockData,
+    ) -> Result<BlockInsertSuccess, DatabaseError> {
+        println!("insert_into_db");
+        todo!()
+    }
+
+    /// Checks that the configuration used matches what is in the database (if
+    /// any). Panics if configuration hash mismatch is found.
+    async fn on_create_client(&self, db_client: &DatabaseClient) -> Result<(), DatabaseError> {
+        println!("on_create_client {:?}", self.config_hash);
+        Ok(())
+    }
+}
+
+struct NodeState;
+
+#[async_trait]
+impl NodeHooks<BlockData> for NodeState {
+    async fn on_use_node(&mut self, client: &mut v2::Client) -> Result<(), NodeError> {
+        println!("on_use_node");
+        todo!()
+    }
+
+    async fn on_finalized_block(
+        &mut self,
+        node: &mut v2::Client,
+        fb: &FinalizedBlockInfo,
+    ) -> Result<BlockData, NodeError> {
+        println!("on_finalized_block {}", fb.block_hash);
+        todo!()
+    }
+}
+
+///
+/// Get the last recorded block height from the database.
+async fn get_last_block_height(
+    db: &DatabaseClient,
+) -> Result<Option<AbsoluteBlockHeight>, postgres::Error> {
+    let statement = "SELECT summaries.height FROM summaries ORDER BY summaries.id DESC LIMIT 1;";
+    let row = db.as_ref().query_opt(statement, &[]).await?;
+    if let Some(row) = row {
+        let raw = row.try_get::<_, i64>(0)?;
+        Ok(Some((raw as u64).into()))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Builds an sql schema conditionally depending on the `config` passed
@@ -194,12 +305,17 @@ fn build_sql_schema(config: &Config) -> String {
     schema
 }
 
-fn main() -> anyhow::Result<()> {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> anyhow::Result<()> {
     let args = {
         let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };
+
+    let mut log_builder = env_logger::Builder::from_env("INDEXER_LOGGER_LOG");
+    log_builder.filter_module(module_path!(), args.log_level);
+    log_builder.init();
 
     let config_file = fs::read_to_string(args.config_file.clone())
         .with_context(|| format!("Could not read file from path {}", args.config_file))?;
@@ -208,8 +324,30 @@ fn main() -> anyhow::Result<()> {
 
     let sql_schema = build_sql_schema(&config);
 
+    // TODO: get these values from config
+    let app_config = SharedIndexerArgs {
+        db_config:           args.db_config,
+        max_behind:          240,
+        num_parallel:        1,
+        connect_timeout:     10,
+        request_timeout:     60,
+        max_connect_attemps: 8,
+        endpoint:            args.endpoint,
+    };
+
+    let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
+    let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
+
+    let node_state = NodeState;
+    let db_state = DatabaseState {
+        config_hash: &[0; 10], // TODO: get proper hash of config_file
+    };
+
     println!("{:#?}", config);
     println!("{}", sql_schema);
 
+    run_service(sql_schema, app_config, shutdown_receive, node_state, db_state).await?;
+
+    shutdown_handler_handle.abort();
     Ok(())
 }
