@@ -315,6 +315,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut log_builder = env_logger::Builder::from_env("INDEXER_LOGGER_LOG");
     log_builder.filter_module(module_path!(), args.log_level);
+    log_builder.filter_module("transaction_logger", args.log_level);
     log_builder.init();
 
     let config_file = fs::read_to_string(args.config_file.clone())
