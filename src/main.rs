@@ -562,18 +562,18 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         finalized_block_info: &FinalizedBlockInfo,
     ) -> Result<TransactionLogData, NodeError> {
         // Collect necessary block-specific information from the `node`
-        let binfo = node.get_block_info(finalized_block_info.block_hash).await?.response;
+        let binfo = node.get_block_info(finalized_block_info.height).await?.response;
         let transaction_summaries = if binfo.transaction_count == 0 {
             Vec::new()
         } else {
-            node.get_block_transaction_events(finalized_block_info.block_hash)
+            node.get_block_transaction_events(finalized_block_info.height)
                 .await?
                 .response
                 .try_collect()
                 .await?
         };
         let special_events = node
-            .get_block_special_events(finalized_block_info.block_hash)
+            .get_block_special_events(finalized_block_info.height)
             .await?
             .response
             .try_collect()
@@ -597,7 +597,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                     }
                 } else {
                     let ainfo = node
-                        .get_account_info(&address.into(), binfo.block_hash)
+                        .get_account_info(&address.into(), binfo.block_height)
                         .await
                         .context("Error querying account info.")?
                         .response;
