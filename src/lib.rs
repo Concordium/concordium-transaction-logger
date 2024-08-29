@@ -1,11 +1,14 @@
+pub mod postgres;
+
 use anyhow::{anyhow, Context};
 use concordium_rust_sdk::{
-    postgres::{self, DatabaseClient},
     types::{hashes::BlockHash, AbsoluteBlockHeight},
     v2::{self, FinalizedBlockInfo},
 };
 use thiserror::Error;
 use tonic::{async_trait, transport::ClientTlsConfig};
+
+use postgres::DatabaseClient;
 
 /// A collection of variables supplied to [`run_service`]. These determine how
 /// the service runs with regards to connections to concordium node(s), db, and
