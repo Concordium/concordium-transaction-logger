@@ -4,8 +4,6 @@ use concordium_rust_sdk::{
     cis2::{self, TokenAmount, TokenId},
     common::{types::Timestamp, SerdeSerialize},
     id::types::AccountAddress,
-    postgres,
-    postgres::DatabaseClient,
     types::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
         ContractAddress, SpecialTransactionOutcome,
@@ -21,6 +19,7 @@ use tokio_postgres::{
 };
 use tonic::async_trait;
 use transaction_logger::{
+    postgres::{self, DatabaseClient},
     run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Moved the postgres feature from the Rust SDK into this crate as its own code.
+- Updated the CI Rust version to 1.73
+
 ## 0.8.0
 
 - Add support for node version 6. This is a breaking change and this version
