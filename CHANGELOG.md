@@ -1,6 +1,6 @@
 # Changelog for the transaction logger service
 
-## Unreleased
+## 0.9.0
 
 - Moved the postgres feature from the Rust SDK into this crate as its own code.
 - Updated the CI Rust version to 1.73
