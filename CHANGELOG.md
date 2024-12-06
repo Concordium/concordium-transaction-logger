@@ -1,5 +1,9 @@
 # Changelog for the transaction logger service
 
+## Unreleased changes
+
+- Added support for suspension related transaction events and special outcomes.
+
 ## 0.9.0
 
 - Moved the postgres feature from the Rust SDK into this crate as its own code.
