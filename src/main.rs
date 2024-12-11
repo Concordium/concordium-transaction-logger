@@ -308,6 +308,14 @@ impl PreparedStatements {
             SpecialTransactionOutcome::PaydayPoolReward {
                 ..
             } => Vec::new(),
+            SpecialTransactionOutcome::ValidatorSuspended {
+                account,
+                ..
+            } => vec![*account],
+            SpecialTransactionOutcome::ValidatorPrimedForSuspension {
+                account,
+                ..
+            } => vec![*account],
         };
         let summary_row = SummaryRow {
             block_hash,
