@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+## 0.10.0
+
 - Added support for suspension related transaction events and special outcomes.
 
 ## 0.9.0
