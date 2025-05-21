@@ -72,18 +72,25 @@ enum QueryStatement {
 struct QueryStatements {
     /// Prepared statement that is used to query accounts in ascending order.
     /// It has 3 placeholders, for account address, `id` start and limit.
-    query_account_statement_asc:   QueryStatement,
+    query_account_statement_asc:    QueryStatement,
     /// Prepared statement that is used to query contracts in ascending order.
     /// It has 4 placeholders, for contract index and subindex, `id` start and
     /// limit.
-    query_contract_statement_asc:  QueryStatement,
+    query_contract_statement_asc:   QueryStatement,
+    /// Prepared statement that is used to query PLT tokens in ascending order.
+    /// It has 3 placeholders, for token_id, `id` start and limit.
+    query_plt_token_statement_asc:  QueryStatement,
     /// Prepared statement that is used to query contracts in descending order.
     /// It has 3 placeholders, for account address, `id` start and limit.
-    query_account_statement_desc:  QueryStatement,
+    query_account_statement_desc:   QueryStatement,
     /// Prepared statement that is used to query contracts in descending order.
     /// It has 4 placeholders, for contract index and subindex, `id` start and
     /// limit.
-    query_contract_statement_desc: QueryStatement,
+    query_contract_statement_desc:  QueryStatement,
+    /// Prepared statement that is used to query PLT tokens in descending order.
+    /// It has 3 placeholders, for token_id, `id` start and
+    /// limit.
+    query_plt_token_statement_desc: QueryStatement,
 }
 
 impl QueryStatements {
@@ -98,11 +105,18 @@ impl QueryStatements {
         // reason for this appears to be the postgresql query planner which chooses
         // a wrong approach for small limits for the database we have.
         let query_account_statement_asc = {
-            let statement = "SELECT ati.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM ati JOIN summaries ON ati.summary = summaries.id
- WHERE ati.account = $1 AND ati.id >= $2
- ORDER BY ati.id ASC, summaries.id ASC LIMIT $3";
+            let statement = "   
+                SELECT 
+                    ati.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM ati JOIN summaries ON ati.summary = summaries.id
+                WHERE ati.account = $1 AND ati.id >= $2
+                ORDER BY ati.id ASC, summaries.id ASC 
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -111,11 +125,40 @@ impl QueryStatements {
         };
 
         let query_contract_statement_asc = {
-            let statement = "SELECT cti.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM cti JOIN summaries ON cti.summary = summaries.id
- WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id >= $3
- ORDER BY cti.id ASC, summaries.id ASC LIMIT $4";
+            let statement = "   
+                SELECT 
+                    cti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM cti 
+                JOIN summaries ON cti.summary = summaries.id
+                WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id >= $3
+                ORDER BY cti.id ASC, summaries.id ASC 
+                LIMIT $4
+            ";
+            if prepared {
+                QueryStatement::Prepared(client.prepare(statement).await?)
+            } else {
+                QueryStatement::Raw(statement)
+            }
+        };
+
+        let query_plt_token_statement_asc = {
+            let statement = "   
+                SELECT 
+                    pltti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM pltti 
+                JOIN summaries ON pltti.summary = summaries.id
+                WHERE pltti.token_id = $1 AND pltti.id >= $2
+                ORDER BY pltti.id ASC, summaries.id ASC 
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -124,11 +167,19 @@ impl QueryStatements {
         };
 
         let query_account_statement_desc = {
-            let statement = "SELECT ati.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM ati JOIN summaries ON ati.summary = summaries.id
- WHERE ati.account = $1 AND ati.id <= $2
- ORDER BY ati.id DESC, summaries.id DESC LIMIT $3";
+            let statement = "   
+                SELECT 
+                    ati.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM ati 
+                JOIN summaries ON ati.summary = summaries.id
+                WHERE ati.account = $1 AND ati.id <= $2
+                ORDER BY ati.id DESC, summaries.id DESC 
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -137,11 +188,40 @@ impl QueryStatements {
         };
 
         let query_contract_statement_desc = {
-            let statement = "SELECT cti.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM cti JOIN summaries ON cti.summary = summaries.id
- WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id <= $3
- ORDER BY cti.id DESC, summaries.id DESC LIMIT $4";
+            let statement = "   
+                SELECT 
+                    cti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM cti 
+                JOIN summaries ON cti.summary = summaries.id
+                WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id <= $3
+                ORDER BY cti.id DESC, summaries.id DESC 
+                LIMIT $4
+            ";
+            if prepared {
+                QueryStatement::Prepared(client.prepare(statement).await?)
+            } else {
+                QueryStatement::Raw(statement)
+            }
+        };
+
+        let query_plt_token_statement_desc = {
+            let statement = "   
+                SELECT 
+                    pltti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM pltti 
+                JOIN summaries ON pltti.summary = summaries.id
+                WHERE pltti.token_id = $1 AND pltti.id <= $2
+                ORDER BY pltti.id DESC, summaries.id DESC
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -151,8 +231,10 @@ impl QueryStatements {
         Ok(Self {
             query_account_statement_asc,
             query_contract_statement_asc,
+            query_plt_token_statement_asc,
             query_account_statement_desc,
             query_contract_statement_desc,
+            query_plt_token_statement_desc,
         })
     }
 }
@@ -317,6 +399,32 @@ impl DatabaseClient {
         Ok(rows.filter_map(|row_or_err| async move { construct_row(row_or_err) }))
     }
 
+    // /// Get the list of transactions affecting the given PLT (protocol level
+    // token). /// The return value is a stream of rows that have been parsed.
+    // ///
+    // /// The `limit` value limits the number of rows that will be returned.
+    // pub async fn query_plt_token(
+    //     &self,
+    //     token_id: TokenId,
+    //     limit: i64,
+    //     order: QueryOrder,
+    // ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>,
+    // tokio_postgres::Error> {     let token_id_bytes: &[u8] =
+    // token_id.as_ref();     let (statement, start) = match order {
+    //         QueryOrder::Ascending {
+    //             start,
+    //         } => (&self.statements.query_plt_token_statement_asc,
+    // start.unwrap_or(i64::MIN)),         QueryOrder::Descending {
+    //             start,
+    //         } => (&self.statements.query_plt_token_statement_desc,
+    // start.unwrap_or(i64::MAX)),     };
+
+    //     let params: [i64; 3] = [token_id_bytes, start, limit];
+
+    //     let rows = self.query(statement, &params).await?;
+    //     Ok(rows.filter_map(|row_or_err| async move { construct_row(row_or_err)
+    // })) }
+
     /// Return all transactions affecting the account, starting with the given
     /// row id.
     pub async fn iterate_account(
@@ -342,6 +450,19 @@ impl DatabaseClient {
         })
         .await
     }
+
+    // /// Return all transactions affecting the PLT (protocol level token),
+    // starting with the given /// row id.
+    // pub async fn iterate_plt_token(
+    //     &self,
+    //     token_id: TokenId,
+    //     start: Option<i64>,
+    // ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>,
+    // tokio_postgres::Error> {     self.query_plt_token(token_id, i64::MAX,
+    // QueryOrder::Ascending {         start,
+    //     })
+    //     .await
+    // }
 }
 
 /// Try to parse a row returned from the database.

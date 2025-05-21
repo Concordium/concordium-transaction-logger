@@ -160,6 +160,8 @@ struct PreparedStatements {
     insert_ati:                 tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
     insert_cti:                 tokio_postgres::Statement,
+    /// Insert into the PLT transaction index table.
+    insert_pltti:               tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -174,6 +176,10 @@ impl PrepareStatements for PreparedStatements {
         let insert_cti = client
             .as_mut()
             .prepare("INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)")
+            .await?;
+        let insert_pltti = client
+            .as_mut()
+            .prepare("INSERT INTO pltti (token_id, summary) VALUES ($1, $2)")
             .await?;
         let insert_summary = client
             .as_mut()
@@ -207,6 +213,7 @@ RETURNING id",
             insert_summary,
             insert_ati,
             insert_cti,
+            insert_pltti,
             cis2_increase_total_supply,
             cis2_decrease_total_supply,
         })
@@ -240,6 +247,8 @@ impl PreparedStatements {
         block_height: AbsoluteBlockHeight,
         ts: &BlockItemSummaryWithCanonicalAddresses,
     ) -> Result<(), postgres::Error> {
+        // TODO: make sure these `affected` addresses are propagating plt events now in
+        // the rust SDK.
         let affected_addresses = &ts.addresses;
         let summary_row = SummaryRow {
             block_hash,
@@ -260,6 +269,12 @@ impl PreparedStatements {
             let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
             tx.query_opt(&self.insert_cti, &values).await?;
         }
+        // TODO: add `affected_plt_tokens` endpoint to the rust sdk.
+        // for affected in ts.summary.affected_plt_tokens() {
+        //     let token_id_bytes: &[u8] = affected.token_id.as_ref();
+        //     let values = [&&token_id_bytes[..] as &(dyn ToSql + Sync), &id];
+        //     tx.query_opt(&self.insert_pltti, &values).await?;
+        // }
         Ok(())
     }
 
