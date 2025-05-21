@@ -631,9 +631,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = {
-        let args = Args::clap()
-            // .setting(AppSettings::ArgRequiredElseHelp)
-            .global_setting(AppSettings::ColoredHelp);
+        let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };

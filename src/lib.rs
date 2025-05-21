@@ -244,6 +244,7 @@ pub async fn set_shutdown(shutdown_sender: tokio::sync::watch::Sender<()>) -> an
     shutdown_sender.send(())?;
     Ok(())
 }
+
 /// Handles database related execution, using `H` for domain-specific database
 /// queries. Will attempt to reconnect to database on errors.
 async fn use_db<D, P, H>(
