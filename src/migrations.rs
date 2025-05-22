@@ -1,6 +1,7 @@
 use crate::postgres::DatabaseClient;
 use anyhow::Context;
 use std::cmp::Ordering;
+use tokio_postgres::Transaction;
 
 /// Ensure the current database schema version is compatible with the supported
 /// schema version.
@@ -39,11 +40,7 @@ pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Resul
     while current < SchemaVersion::LATEST {
         log::info!("Running migration from database schema version {}", current.as_i64());
         let new_version = current.migration_to_next(db_connection).await?;
-        if new_version.is_partial() {
-            log::info!("Committing partial migration to schema version {}", new_version.as_i64());
-        } else {
-            log::info!("Migrated database schema to version {} successfully", new_version.as_i64());
-        }
+        log::info!("Migrated database schema to version {} successfully", new_version.as_i64());
         current = new_version
     }
     Ok(())
@@ -150,49 +147,20 @@ impl SchemaVersion {
         }
     }
 
-    /// Whether the database schema version is a partial migration.
-    /// Note: We use match statements here to catch missing variants at
-    /// compile-time. This enforces explicit evaluation when adding a new
-    /// database schema, ensuring awareness of whether the change is partial.
-    fn is_partial(self) -> bool {
-        match self {
-            SchemaVersion::Empty => false,
-            SchemaVersion::InitialSchema => false,
-            SchemaVersion::PLTSchema => false,
-        }
-    }
-
     /// Run migrations for this schema version to the next.
     async fn migration_to_next(
         &self,
         database_client: &mut DatabaseClient,
     ) -> anyhow::Result<SchemaVersion> {
         let start_time = chrono::Utc::now();
+        let mut tx = database_client.as_mut().transaction().await?;
         let new_version = match self {
             SchemaVersion::Empty => {
-                database_client
-                    .as_ref()
-                    .batch_execute(include_str!("../resources/m0001-initial.sql"))
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to execute SQL schema version: {}",
-                            SchemaVersion::InitialSchema
-                        )
-                    })?;
+                tx.batch_execute(include_str!("../resources/m0001-initial.sql")).await?;
                 SchemaVersion::InitialSchema
             }
             SchemaVersion::InitialSchema => {
-                database_client
-                    .as_ref()
-                    .batch_execute(include_str!("../resources/m0002-PLT.sql"))
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to execute SQL schema version: {}",
-                            SchemaVersion::PLTSchema
-                        )
-                    })?;
+                tx.batch_execute(include_str!("../resources/m0002-PLT.sql")).await?;
                 SchemaVersion::PLTSchema
             }
             SchemaVersion::PLTSchema => unimplemented!(
@@ -200,8 +168,11 @@ impl SchemaVersion {
                 self.as_i64()
             ),
         };
+
         let end_time = chrono::Utc::now();
-        insert_migration(database_client, &new_version.into(), start_time, end_time).await?;
+        insert_migration(&mut tx, &new_version.into(), start_time, end_time).await?;
+        tx.commit().await?;
+
         Ok(new_version)
     }
 }
@@ -258,7 +229,7 @@ pub async fn current_schema_version(
 
 /// Update the migrations table with a new migration.
 async fn insert_migration(
-    database_client: &mut DatabaseClient,
+    tx: &mut Transaction<'_>,
     migration: &Migration,
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
@@ -271,9 +242,7 @@ async fn insert_migration(
             start_time,
             end_time
         )
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (version) DO UPDATE 
-            SET end_time = EXCLUDED.end_time";
+        VALUES ($1, $2, $3, $4, $5)";
 
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
         &migration.version,
@@ -283,6 +252,6 @@ async fn insert_migration(
         &end_time,
     ];
 
-    database_client.as_ref().execute(statement, params).await?;
+    tx.execute(statement, params).await?;
     Ok(())
 }
