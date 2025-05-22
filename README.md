@@ -210,11 +210,11 @@ git submodule update --init --recursive
 
 Database schema migration is handled in the [file](./src/migrations.rs).
 
-When running the `transaction-logger` binary, it will check the current database schema and apply all remaining database migrations until the `SchemaVersion::LATEST` is reached.
+When running the `transaction-logger` binary, it will check the current database schema version and execute all remaining database migrations until the `SchemaVersion::LATEST` is reached.
 
 #### Introducing a new database schema version
 
-Database schema files are tracked in the `./resources/` file and every version of the database schema are represented by the `SchemaVersion` enum in [migration](./src/migrations.rs) logic.
+Database schema files are tracked in the `./resources/` folder and every version of the database schema are represented by the `SchemaVersion` enum in [migration](./src/migrations.rs) logic.
 
 - Extend the `SchemaVersion` enum with a variant representing changes since previous version.
 - Extend functions found in `impl SchemaVersion`. Every required function should produce compile-time errors for the now missing variant.

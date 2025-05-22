@@ -14,4 +14,4 @@ CREATE TABLE IF NOT EXISTS pltti(
 CREATE TABLE IF NOT EXISTS plt_tokens(
              id SERIAL8 UNIQUE PRIMARY KEY,
              token_id BYTEA NOT NULL UNIQUE,
-             total_supply NUMERIC(80, 0) NOT NULL);
+             total_supply NUMERIC NOT NULL DEFAULT 0);

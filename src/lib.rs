@@ -65,8 +65,9 @@ impl DBConfiguration {
 
         // Run the database migrations. This creates the `migrations` table and the
         // tables defined in the database schema files in the folder `./resources`.
-        // The task checks the current database schema and applies all remaining
-        // database migrations until the `SchemaVersion::LATEST` is reached.
+        // The task checks the current database schema version and executes all
+        // remaining database migrations until the `SchemaVersion::LATEST` is
+        // reached.
         let migration_task =
             cancel_token.run_until_cancelled(migrations::run_migrations(&mut client));
         tokio::select! {

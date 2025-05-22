@@ -4,7 +4,6 @@ use std::cmp::Ordering;
 
 /// Ensure the current database schema version is compatible with the supported
 /// schema version.
-/// When the current database schema version is older than supported.
 pub async fn ensure_compatible_schema_version(
     database_client: &DatabaseClient,
     supported: SchemaVersion,
@@ -13,7 +12,7 @@ pub async fn ensure_compatible_schema_version(
         anyhow::bail!(
             "Failed to find database schema version.
 
-Use `transaction-logger` binary to initialize the database schema."
+The `transaction-logger` binary should have initialized the database schema at start."
         )
     }
     let current = current_schema_version(database_client).await?;
@@ -24,7 +23,8 @@ Use `transaction-logger` binary to initialize the database schema."
             "Database is using an older schema version not supported by this version of \
              `transaction-logger`.
 
-Use `transaction-logger` binary to migrate the database schema."
+The `transaction-logger` binary should have migrated the database schema at start to the latest \
+             version."
         ),
     }
     Ok(())
@@ -167,7 +167,6 @@ impl SchemaVersion {
         &self,
         database_client: &mut DatabaseClient,
     ) -> anyhow::Result<SchemaVersion> {
-        // let mut tx = pool.begin().await?;
         let start_time = chrono::Utc::now();
         let new_version = match self {
             SchemaVersion::Empty => {
@@ -191,7 +190,7 @@ impl SchemaVersion {
                     .with_context(|| {
                         format!(
                             "Failed to execute SQL schema version: {}",
-                            SchemaVersion::InitialSchema
+                            SchemaVersion::PLTSchema
                         )
                     })?;
                 SchemaVersion::PLTSchema
@@ -246,8 +245,7 @@ async fn has_migration_table(database_client: &DatabaseClient) -> anyhow::Result
 pub async fn current_schema_version(
     database_client: &DatabaseClient,
 ) -> anyhow::Result<SchemaVersion> {
-    let statement = "
-     SELECT MAX(version) FROM migrations";
+    let statement = "SELECT MAX(version) FROM migrations";
 
     let row_opt = database_client.as_ref().query_opt(statement, &[]).await?;
     let version = match row_opt {
@@ -265,11 +263,17 @@ async fn insert_migration(
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<()> {
-    let statement = "INSERT INTO migrations (version, description, destructive, start_time, \
-                     end_time)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (version) DO UPDATE SET
-             end_time = EXCLUDED.end_time";
+    let statement = "
+        INSERT INTO migrations (
+            version, 
+            description,
+            destructive, 
+            start_time,
+            end_time
+        )
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (version) DO UPDATE 
+            SET end_time = EXCLUDED.end_time";
 
     let params: &[&(dyn tokio_postgres::types::ToSql + Sync)] = &[
         &migration.version,
