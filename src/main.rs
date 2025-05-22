@@ -215,10 +215,10 @@ RETURNING id",
 
 impl PreparedStatements {
     /// Insert a new summary row, containing a single transaction summary.
-    async fn insert_summary<'a, 'b, 'c>(
-        &'a self,
-        tx: &DBTransaction<'b>,
-        summary: &SummaryRow<'c>,
+    async fn insert_summary(
+        &self,
+        tx: &DBTransaction<'_>,
+        summary: &SummaryRow<'_>,
     ) -> Result<i64, postgres::Error> {
         let values = [
             &summary.block_hash.as_ref() as &(dyn ToSql + Sync),
@@ -232,9 +232,9 @@ impl PreparedStatements {
     }
 
     /// Insert an account transaction.
-    async fn insert_transaction<'a, 'b>(
-        &'a self,
-        tx: &DBTransaction<'b>,
+    async fn insert_transaction(
+        &self,
+        tx: &DBTransaction<'_>,
         block_hash: BlockHash,
         block_time: Timestamp,
         block_height: AbsoluteBlockHeight,
@@ -264,9 +264,9 @@ impl PreparedStatements {
     }
 
     /// Insert special outcomes.
-    async fn insert_special<'a, 'b>(
-        &'a self,
-        tx: &DBTransaction<'b>,
+    async fn insert_special(
+        &self,
+        tx: &DBTransaction<'_>,
         block_hash: BlockHash,
         block_time: Timestamp,
         block_height: AbsoluteBlockHeight,
@@ -334,9 +334,9 @@ impl PreparedStatements {
 
     /// Increase the total supply of the given token, and return the primary key
     /// in the `cis2_tokens` table for that token.
-    async fn cis2_increase_total_supply<'a, 'b>(
-        &'a self,
-        tx: &DBTransaction<'b>,
+    async fn cis2_increase_total_supply(
+        &self,
+        tx: &DBTransaction<'_>,
         ca: ContractAddress,
         token_id: &TokenId,
         amount: &TokenAmount,
@@ -354,9 +354,9 @@ impl PreparedStatements {
 
     /// Decrease the total supply of the given token, and return the primary key
     /// in the `cis2_tokens` table for that token.
-    async fn cis2_decrease_total_supply<'a, 'b>(
-        &'a self,
-        tx: &DBTransaction<'b>,
+    async fn cis2_decrease_total_supply(
+        &self,
+        tx: &DBTransaction<'_>,
         ca: ContractAddress,
         token_id: &TokenId,
         amount: &TokenAmount,
@@ -645,7 +645,6 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
-    let sql_schema = include_str!("../resources/schema.sql");
     let node_hooks = CanonicalAddressCache(HashSet::new());
 
     let run_service_args = SharedIndexerArgs {
@@ -659,7 +658,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseState, CanonicalAddressCache>(
-        sql_schema,
         run_service_args,
         shutdown_receive,
         node_hooks,
