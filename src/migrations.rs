@@ -33,7 +33,7 @@ Use `transaction-logger` binary to migrate the database schema."
 /// Migrate the database schema to the latest version.
 pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Result<()> {
     ensure_migrations_table(db_connection).await?;
-    let mut current = current_schema_version(&mut *db_connection).await?;
+    let mut current = current_schema_version(db_connection).await?;
     log::info!("Current database schema version {}", current.as_i64());
     log::info!("Latest database schema version {}", SchemaVersion::LATEST.as_i64());
     while current < SchemaVersion::LATEST {
@@ -54,7 +54,7 @@ pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Resul
 pub async fn ensure_latest_schema_version(
     db_connection: &mut DatabaseClient,
 ) -> anyhow::Result<()> {
-    if !has_migration_table(&mut *db_connection).await? {
+    if !has_migration_table(db_connection).await? {
         anyhow::bail!(
             "Failed to find the database schema version.
             The `transaction-logger` binary should have initialized the database schema at start."
@@ -116,8 +116,8 @@ pub enum SchemaVersion {
     #[display("0000:Empty database with no tables yet.")]
     Empty,
     #[display(
-        "0001:Initial schema version with tables for blocks, transactions, accounts, contracts, \
-         tokens and more."
+        "0001:Initial schema version with tables for tracking affected accounts, contracts, and \
+         cis2 tokens."
     )]
     InitialSchema,
     #[display("0002:Adds index and tables for PLTs (protocol level token).")]
@@ -279,6 +279,6 @@ async fn insert_migration(
         &end_time,
     ];
 
-    database_client.as_ref().execute(statement, &params).await?;
+    database_client.as_ref().execute(statement, params).await?;
     Ok(())
 }
