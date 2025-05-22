@@ -387,7 +387,7 @@ where
     H: NodeHooks<D>, {
     // Use TLS if the URI scheme is HTTPS.
     // This uses whatever system certificates have been installed as trusted roots.
-    let node_ep = if node_ep.uri().scheme() == Some(&http::uri::Scheme::HTTPS) {
+    let node_ep = if node_ep.uri().scheme() == Some(&concordium_rust_sdk::v2::Scheme::HTTPS) {
         node_ep.tls_config(ClientTlsConfig::new()).map_err(NodeError::ConnectionError)?
     } else {
         node_ep

@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS summaries(
 CREATE TABLE IF NOT EXISTS ati(
              id SERIAL8,
              account BYTEA NOT NULL,
-             -- Index of the row in the summaries table.
+             -- `Id` of the row in the summaries table.
              summary INT8 NOT NULL,
              -- The primary key enables to query efficiently "Give me all summaries associated to a given account".
              CONSTRAINT ati_pkey PRIMARY KEY (account, id),
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS cti(
              id SERIAL8,
              index INT8 NOT NULL,
              subindex INT8 NOT NULL,
-             -- Index of the row in the summaries table.
+             -- `Id` of the row in the summaries table.
              summary INT8 NOT NULL,
              -- The primary key enables to query efficiently "Give me all summaries associated to a given contract".
              CONSTRAINT cti_pkey PRIMARY KEY (index, subindex, id),

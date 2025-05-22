@@ -3,7 +3,7 @@
 CREATE TABLE IF NOT EXISTS pltti(
              id SERIAL8,
              token_id BYTEA NOT NULL,
-             -- Index of the row in the summaries table.
+             -- `Id` of the row in the summaries table.
              summary INT8 NOT NULL,
              -- The primary key enables to query efficiently "Give me all summaries associated to a given PLT".
              CONSTRAINT pltti_pkey PRIMARY KEY (token_id, id),
