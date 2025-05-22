@@ -2,7 +2,16 @@
 
 ## Unreleased changes
 
+Database schema version: 2
+
+### Added
+
+- Added database migration logic.
+- Added database schema version 2 with tables for tracking PLT tokens.
+
 ## 0.10.0
+
+Database schema version: 1
 
 - Added support for suspension related transaction events and special outcomes.
 

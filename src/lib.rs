@@ -6,7 +6,10 @@ use concordium_rust_sdk::{
     v2::{self, FinalizedBlockInfo},
 };
 use thiserror::Error;
+use tokio_util::sync::CancellationToken;
 use tonic::{async_trait, transport::ClientTlsConfig};
+
+pub mod migrations;
 
 use postgres::DatabaseClient;
 
@@ -43,41 +46,45 @@ pub struct DBConn<P> {
 
 /// Configuration for creating database connections.
 struct DBConfiguration {
-    /// SQL statements to create the database. Executed when client is first
-    /// created.
-    sql_schema:        &'static str,
     /// Postgres configuration used to create a database client.
-    pg_config:         postgres::Config,
-    /// Whether to try running the SQL to create database tables.
-    try_create_tables: bool,
+    pg_config: postgres::Config,
 }
 
 impl DBConfiguration {
-    fn new(sql_schema: &'static str, pg_config: postgres::Config) -> Self {
+    fn new(pg_config: postgres::Config) -> Self {
         Self {
-            sql_schema,
             pg_config,
-            try_create_tables: true,
         }
     }
 
-    /// Create a [`DBConn`] connection, creating tables according to
-    /// `self.sql_schema` once in the lifetime of the factory (i.e. if
-    /// `self.try_create_tables` is true at the time of invocation) Should
-    /// not be invoked manually, but instead `try_connect` should be used.
+    /// Create a [`DBConn`] connection, and run the database migration task.
     async fn get_new_conn<P: PrepareStatements>(&mut self) -> anyhow::Result<DBConn<P>> {
         let mut client = DatabaseClient::create(self.pg_config.clone(), postgres::NoTls).await?;
 
-        // Ensure tables exist.
-        if self.try_create_tables {
-            client
-                .as_ref()
-                .batch_execute(self.sql_schema)
-                .await
-                .with_context(|| format!("Failed to execute SQL from {}", self.sql_schema))?;
-            self.try_create_tables = false;
-        }
+        let cancel_token = CancellationToken::new();
 
+        // Run the database migrations. This creates the `migrations` table and the
+        // tables defined in the database schema files in the folder `./resources`.
+        // The task checks the current database schema and applies all remaining
+        // database migrations until the `SchemaVersion::LATEST` is reached.
+        let migration_task =
+            cancel_token.run_until_cancelled(migrations::run_migrations(&mut client));
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+               log::info!("Migrations aborted, shutting down");
+                cancel_token.cancel();
+                return Err(anyhow::format_err!("Database creation was canceled by user."))
+            },
+            result = migration_task => {
+                if let Err(err) = result.transpose() {
+                    return Err(anyhow::format_err!("Migration error: {}", err))
+                }
+            }
+        };
+
+        migrations::ensure_latest_schema_version(&mut client).await?;
+
+        // Prepares query statements.
         let prepared = P::prepare_all(&mut client)
             .await
             .context("Failed to prepate statements for db client")?;
@@ -334,7 +341,6 @@ where
 /// receives any message.
 async fn db_process<D, P, H>(
     pg_config: postgres::Config,
-    sql_schema: &'static str,
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     receiver: tokio::sync::mpsc::Receiver<D>,
     shutdown_receiver: tokio::sync::watch::Receiver<()>,
@@ -343,7 +349,7 @@ async fn db_process<D, P, H>(
 where
     P: PrepareStatements,
     H: DatabaseHooks<D, P>, {
-    let mut db_config = DBConfiguration::new(sql_schema, pg_config);
+    let mut db_config = DBConfiguration::new(pg_config);
 
     let mut sr = shutdown_receiver.clone();
     let mut db = tokio::select! {
@@ -422,7 +428,6 @@ where
 /// Implementation of `NH` defines hooks used by the node thread, while
 /// implementation of `DH` defines hooks used by the database thread.
 pub async fn run_service<D, P, DH, NH>(
-    sql_schema: &'static str,
     app_config: SharedIndexerArgs,
     mut shutdown_receiver: tokio::sync::watch::Receiver<()>,
     mut node_hooks: NH,
@@ -464,7 +469,6 @@ where
 
     let db_write_handle = tokio::spawn(db_process::<D, P, DH>(
         db_config,
-        sql_schema,
         height_sender,
         receiver,
         shutdown_receiver.clone(),

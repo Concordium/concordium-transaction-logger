@@ -645,7 +645,6 @@ async fn main() -> anyhow::Result<()> {
     let (shutdown_send, shutdown_receive) = tokio::sync::watch::channel(());
     let shutdown_handler_handle = tokio::spawn(set_shutdown(shutdown_send));
 
-    let sql_schema = include_str!("../resources/schema.sql");
     let node_hooks = CanonicalAddressCache(HashSet::new());
 
     let run_service_args = SharedIndexerArgs {
@@ -659,7 +658,6 @@ async fn main() -> anyhow::Result<()> {
     };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseState, CanonicalAddressCache>(
-        sql_schema,
         run_service_args,
         shutdown_receive,
         node_hooks,
