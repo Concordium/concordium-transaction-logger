@@ -2,7 +2,7 @@
 -- Table associates summaries to affected PLTs (protocol level tokens).
 CREATE TABLE IF NOT EXISTS pltti(
              id SERIAL8,
-             token_id BYTEA NOT NULL,
+             token_id TEXT NOT NULL,
              -- `Id` of the row in the summaries table.
              summary INT8 NOT NULL,
              -- The primary key enables to query efficiently "Give me all summaries associated to a given PLT".
@@ -13,5 +13,5 @@ CREATE TABLE IF NOT EXISTS pltti(
 -- Table containing all the PLT tokens.
 CREATE TABLE IF NOT EXISTS plt_tokens(
              id SERIAL8 UNIQUE PRIMARY KEY,
-             token_id BYTEA NOT NULL UNIQUE,
+             token_id TEXT NOT NULL UNIQUE,
              total_supply NUMERIC NOT NULL DEFAULT 0);

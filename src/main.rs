@@ -247,8 +247,6 @@ impl PreparedStatements {
         block_height: AbsoluteBlockHeight,
         ts: &BlockItemSummaryWithCanonicalAddresses,
     ) -> Result<(), postgres::Error> {
-        // TODO: make sure these `affected` addresses are propagating plt events now in
-        // the rust SDK.
         let affected_addresses = &ts.addresses;
         let summary_row = SummaryRow {
             block_hash,
@@ -269,12 +267,12 @@ impl PreparedStatements {
             let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
             tx.query_opt(&self.insert_cti, &values).await?;
         }
-        // TODO: add `affected_plt_tokens` endpoint to the rust sdk.
-        // for affected in ts.summary.affected_plt_tokens() {
-        //     let token_id_bytes: &[u8] = affected.token_id.as_ref();
-        //     let values = [&&token_id_bytes[..] as &(dyn ToSql + Sync), &id];
-        //     tx.query_opt(&self.insert_pltti, &values).await?;
-        // }
+
+        for affected_token in ts.summary.affected_plt_tokens() {
+            let token_id_string = affected_token.as_ref().to_string();
+            let params = [&token_id_string as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            tx.query_opt(&self.insert_pltti, &params).await?;
+        }
         Ok(())
     }
 
@@ -605,6 +603,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
+            //
             let affected_addresses = summary.affected_addresses();
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index

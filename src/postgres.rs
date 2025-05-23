@@ -2,6 +2,7 @@ use concordium_rust_sdk::{
     base::hashes::BlockHash,
     common::types::Timestamp,
     id::types::AccountAddress,
+    protocol_level_tokens::TokenId,
     types::{AbsoluteBlockHeight, BlockItemSummary, ContractAddress, SpecialTransactionOutcome},
 };
 use futures::StreamExt;
@@ -399,31 +400,35 @@ impl DatabaseClient {
         Ok(rows.filter_map(|row_or_err| async move { construct_row(row_or_err) }))
     }
 
-    // /// Get the list of transactions affecting the given PLT (protocol level
-    // token). /// The return value is a stream of rows that have been parsed.
-    // ///
-    // /// The `limit` value limits the number of rows that will be returned.
-    // pub async fn query_plt_token(
-    //     &self,
-    //     token_id: TokenId,
-    //     limit: i64,
-    //     order: QueryOrder,
-    // ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>,
-    // tokio_postgres::Error> {     let token_id_bytes: &[u8] =
-    // token_id.as_ref();     let (statement, start) = match order {
-    //         QueryOrder::Ascending {
-    //             start,
-    //         } => (&self.statements.query_plt_token_statement_asc,
-    // start.unwrap_or(i64::MIN)),         QueryOrder::Descending {
-    //             start,
-    //         } => (&self.statements.query_plt_token_statement_desc,
-    // start.unwrap_or(i64::MAX)),     };
+    /// Get the list of transactions affecting the given PLT (protocol level
+    /// token). The return value is a stream of rows that have been parsed.
+    ///
+    /// The `limit` value limits the number of rows that will be returned.
+    pub async fn query_plt_token(
+        &self,
+        token_id: TokenId,
+        limit: i64,
+        order: QueryOrder,
+    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+        let token_id_string = token_id.as_ref().to_string();
+        let (statement, start) = match order {
+            QueryOrder::Ascending {
+                start,
+            } => (&self.statements.query_plt_token_statement_asc, start.unwrap_or(i64::MIN)),
+            QueryOrder::Descending {
+                start,
+            } => (&self.statements.query_plt_token_statement_desc, start.unwrap_or(i64::MAX)),
+        };
 
-    //     let params: [i64; 3] = [token_id_bytes, start, limit];
+        let params = [
+            &token_id_string as &(dyn ToSql + Sync),
+            &start as &(dyn ToSql + Sync),
+            &limit as &(dyn ToSql + Sync),
+        ];
 
-    //     let rows = self.query(statement, &params).await?;
-    //     Ok(rows.filter_map(|row_or_err| async move { construct_row(row_or_err)
-    // })) }
+        let rows = self.query(statement, params).await?;
+        Ok(rows.filter_map(|row_or_err| async move { construct_row(row_or_err) }))
+    }
 
     /// Return all transactions affecting the account, starting with the given
     /// row id.
@@ -451,18 +456,18 @@ impl DatabaseClient {
         .await
     }
 
-    // /// Return all transactions affecting the PLT (protocol level token),
-    // starting with the given /// row id.
-    // pub async fn iterate_plt_token(
-    //     &self,
-    //     token_id: TokenId,
-    //     start: Option<i64>,
-    // ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>,
-    // tokio_postgres::Error> {     self.query_plt_token(token_id, i64::MAX,
-    // QueryOrder::Ascending {         start,
-    //     })
-    //     .await
-    // }
+    /// Return all transactions affecting the PLT (protocol level token),
+    /// starting with the given row id.
+    pub async fn iterate_plt_token(
+        &self,
+        token_id: TokenId,
+        start: Option<i64>,
+    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+        self.query_plt_token(token_id, i64::MAX, QueryOrder::Ascending {
+            start,
+        })
+        .await
+    }
 }
 
 /// Try to parse a row returned from the database.
