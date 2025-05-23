@@ -160,6 +160,8 @@ struct PreparedStatements {
     insert_ati:                 tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
     insert_cti:                 tokio_postgres::Statement,
+    /// Insert into the PLT transaction index table.
+    insert_pltti:               tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -174,6 +176,10 @@ impl PrepareStatements for PreparedStatements {
         let insert_cti = client
             .as_mut()
             .prepare("INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)")
+            .await?;
+        let insert_pltti = client
+            .as_mut()
+            .prepare("INSERT INTO pltti (token_id, summary) VALUES ($1, $2)")
             .await?;
         let insert_summary = client
             .as_mut()
@@ -207,6 +213,7 @@ RETURNING id",
             insert_summary,
             insert_ati,
             insert_cti,
+            insert_pltti,
             cis2_increase_total_supply,
             cis2_decrease_total_supply,
         })
@@ -259,6 +266,12 @@ impl PreparedStatements {
             let subindex = affected.subindex;
             let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
             tx.query_opt(&self.insert_cti, &values).await?;
+        }
+
+        for affected_token in ts.summary.affected_plt_tokens() {
+            let token_id_string = affected_token.as_ref().to_string();
+            let params = [&token_id_string as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            tx.query_opt(&self.insert_pltti, &params).await?;
         }
         Ok(())
     }
@@ -590,6 +603,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
+            //
             let affected_addresses = summary.affected_addresses();
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index
@@ -631,9 +645,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = {
-        let args = Args::clap()
-            // .setting(AppSettings::ArgRequiredElseHelp)
-            .global_setting(AppSettings::ColoredHelp);
+        let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };
