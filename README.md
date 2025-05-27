@@ -2,6 +2,12 @@
 
 Log affected accounts and smart contracts into a postgres database.
 
+## Component Interaction Diagram
+
+The transaction logger is a blockchain indexer that collects transaction data and stores it in a PostgreSQL database. This data enables wallets to access historical transaction information. Wallets retrieve this data via the [wallet-proxy API](https://github.com/Concordium/concordium-wallet-proxy).
+
+![Component Interaction Diagram](docs/diagrams/transaction-logger.drawio.png)
+
 # Supported configuration options
 
 - `TRANSACTION_LOGGER_NODES`
