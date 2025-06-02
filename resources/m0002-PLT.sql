@@ -1,4 +1,3 @@
--- TODO: Needs filling
 -- Table associates summaries to affected PLTs (protocol level tokens).
 CREATE TABLE IF NOT EXISTS pltti(
              id SERIAL8,
@@ -9,7 +8,6 @@ CREATE TABLE IF NOT EXISTS pltti(
              CONSTRAINT pltti_pkey PRIMARY KEY (token_id, id),
              CONSTRAINT pltti_summary_fkey FOREIGN KEY(summary) REFERENCES summaries(id) ON DELETE RESTRICT ON UPDATE RESTRICT);
 
--- TODO: Needs filling of the data once we have `mint`/`burn` events as well as filling in the initialSupply when a PLT token is created.
 -- Table containing all the PLT tokens.
 CREATE TABLE IF NOT EXISTS plt_tokens(
              id SERIAL8 UNIQUE PRIMARY KEY,

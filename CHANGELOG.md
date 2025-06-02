@@ -6,6 +6,7 @@ Database schema version: 2
 
 ### Added
 
+- Add indexer logic to fill the plt token tables with data.
 - Added database migration logic.
 - Added database schema version 2 with tables for tracking PLT tokens.
 
