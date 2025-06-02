@@ -1,12 +1,14 @@
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
+    base::protocol_level_tokens,
     cis2::{self, TokenAmount, TokenId},
     common::{types::Timestamp, SerdeSerialize},
     id::types::AccountAddress,
+    protocol_level_tokens::TokenEventDetails,
     types::{
-        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
-        ContractAddress, SpecialTransactionOutcome,
+        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, AccountTransactionEffects,
+        BlockItemSummary, BlockItemSummaryDetails, ContractAddress, SpecialTransactionOutcome,
     },
     v2::{self, FinalizedBlockInfo},
 };
@@ -155,15 +157,21 @@ type TransactionLogData =
 /// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
     /// Insert into the summary table.
-    insert_summary:             tokio_postgres::Statement,
+    insert_summary: tokio_postgres::Statement,
     /// Insert into the account transaction index table.
-    insert_ati:                 tokio_postgres::Statement,
+    insert_ati: tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
-    insert_cti:                 tokio_postgres::Statement,
+    insert_cti: tokio_postgres::Statement,
+    /// Insert into the PLT transaction index table.
+    insert_pltti: tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
     cis2_decrease_total_supply: tokio_postgres::Statement,
+    /// Increase the total supply of a given plt token.
+    plt_token_increase_total_supply: tokio_postgres::Statement,
+    /// Decrease the total supply of a given plt token.
+    plt_token_decrease_total_supply: tokio_postgres::Statement,
 }
 
 #[async_trait]
@@ -175,6 +183,10 @@ impl PrepareStatements for PreparedStatements {
             .as_mut()
             .prepare("INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)")
             .await?;
+        let insert_pltti = client
+            .as_mut()
+            .prepare("INSERT INTO pltti (token_id, summary) VALUES ($1, $2)")
+            .await?;
         let insert_summary = client
             .as_mut()
             .prepare(
@@ -185,21 +197,57 @@ impl PrepareStatements for PreparedStatements {
         let cis2_increase_total_supply = client
             .as_mut()
             .prepare(
-                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
-VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
-ON CONFLICT (index, subindex, token_id)
-DO UPDATE SET total_supply = cis2_tokens.total_supply + EXCLUDED.total_supply
-RETURNING id",
+                "INSERT INTO cis2_tokens (
+                    index, 
+                    subindex, 
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+                ON CONFLICT (index, subindex, token_id)
+                DO UPDATE SET total_supply = cis2_tokens.total_supply + EXCLUDED.total_supply
+                RETURNING id",
             )
             .await?;
         let cis2_decrease_total_supply = client
             .as_mut()
             .prepare(
-                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
-VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
-ON CONFLICT (index, subindex, token_id)
-DO UPDATE SET total_supply = cis2_tokens.total_supply - EXCLUDED.total_supply
-RETURNING id",
+                "INSERT INTO cis2_tokens (
+                    index, 
+                    subindex, 
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+                ON CONFLICT (index, subindex, token_id)
+                DO UPDATE SET total_supply = cis2_tokens.total_supply - EXCLUDED.total_supply
+                RETURNING id",
+            )
+            .await?;
+        let plt_token_increase_total_supply = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO plt_tokens ( 
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, CAST($2 AS TEXT):: NUMERIC)
+                ON CONFLICT (token_id)
+                DO UPDATE SET total_supply = plt_tokens.total_supply + EXCLUDED.total_supply
+                RETURNING id",
+            )
+            .await?;
+        let plt_token_decrease_total_supply = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO plt_tokens (
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, CAST($2 AS TEXT):: NUMERIC)
+                ON CONFLICT (token_id)
+                DO UPDATE SET total_supply = plt_tokens.total_supply - EXCLUDED.total_supply
+                RETURNING id",
             )
             .await?;
 
@@ -207,8 +255,11 @@ RETURNING id",
             insert_summary,
             insert_ati,
             insert_cti,
+            insert_pltti,
             cis2_increase_total_supply,
             cis2_decrease_total_supply,
+            plt_token_increase_total_supply,
+            plt_token_decrease_total_supply,
         })
     }
 }
@@ -259,6 +310,12 @@ impl PreparedStatements {
             let subindex = affected.subindex;
             let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
             tx.query_opt(&self.insert_cti, &values).await?;
+        }
+
+        for affected_token in ts.summary.affected_plt_tokens() {
+            let token_id_string = affected_token.as_ref().to_string();
+            let params = [&token_id_string as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            tx.query_opt(&self.insert_pltti, &params).await?;
         }
         Ok(())
     }
@@ -374,7 +431,7 @@ impl PreparedStatements {
 
     /// Check whether the summary contains any CIS2 events, and if so,
     /// parse them and insert them into the `cis2_tokens` table.
-    async fn insert_cis2(
+    async fn insert_cis2_tokens(
         &self,
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
@@ -423,6 +480,79 @@ impl PreparedStatements {
         }
         Ok(())
     }
+
+    /// Increase the total supply of the given plt token.
+    async fn plt_token_increase_total_supply(
+        &self,
+        tx: &DBTransaction<'_>,
+        token_id: &protocol_level_tokens::TokenId,
+        amount: protocol_level_tokens::TokenAmount,
+    ) -> Result<(), postgres::Error> {
+        let values = [&token_id.as_ref() as &(dyn ToSql + Sync), &amount.to_string()];
+        tx.query_one(&self.plt_token_increase_total_supply, &values).await?;
+        Ok(())
+    }
+
+    /// Decrease the total supply of the given plt token
+    async fn plt_token_decrease_total_supply(
+        &self,
+        tx: &DBTransaction<'_>,
+        token_id: &protocol_level_tokens::TokenId,
+        amount: protocol_level_tokens::TokenAmount,
+    ) -> Result<(), postgres::Error> {
+        let values = [&token_id.as_ref() as &(dyn ToSql + Sync), &amount.to_string()];
+        tx.query_one(&self.plt_token_decrease_total_supply, &values).await?;
+        Ok(())
+    }
+
+    /// Check whether the summary contains any plt token events that change the
+    /// supply of the plt token, and if so, parse them and insert or update
+    /// the `plt_tokens` table.
+    async fn insert_plt_tokens(
+        &self,
+        tx: &DBTransaction<'_>,
+        ts: &BlockItemSummary,
+    ) -> Result<(), postgres::Error> {
+        if let BlockItemSummaryDetails::AccountTransaction(at) = &ts.details {
+            if let AccountTransactionEffects::TokenGovernance {
+                events,
+            } = &at.effects
+            {
+                for token_event in events {
+                    match &token_event.event {
+                        TokenEventDetails::Module(_) => {
+                            // do nothing, tokens are not created/destroyed
+                            // here.
+                        }
+
+                        TokenEventDetails::Transfer(_) => {
+                            // do nothing, tokens are not created/destroyed
+                            // here.
+                        }
+
+                        TokenEventDetails::Mint(event) => {
+                            self.plt_token_increase_total_supply(
+                                tx,
+                                &token_event.token_id,
+                                event.amount,
+                            )
+                            .await?;
+                        }
+
+                        TokenEventDetails::Burn(event) => {
+                            self.plt_token_decrease_total_supply(
+                                tx,
+                                &token_event.token_id,
+                                event.amount,
+                            )
+                            .await?;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Insert block into the database. Inserts transactionally by block to
@@ -442,7 +572,8 @@ async fn insert_block(
         prepared
             .insert_transaction(&db_tx, block_hash, block_time, block_height, transaction)
             .await?;
-        prepared.insert_cis2(&db_tx, &transaction.summary).await?;
+        prepared.insert_cis2_tokens(&db_tx, &transaction.summary).await?;
+        prepared.insert_plt_tokens(&db_tx, &transaction.summary).await?;
     }
     for special in special_events.iter() {
         prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
@@ -631,9 +762,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = {
-        let args = Args::clap()
-            // .setting(AppSettings::ArgRequiredElseHelp)
-            .global_setting(AppSettings::ColoredHelp);
+        let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };
