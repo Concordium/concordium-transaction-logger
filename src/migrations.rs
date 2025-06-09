@@ -117,12 +117,10 @@ pub enum SchemaVersion {
          cis2 tokens."
     )]
     InitialSchema,
-    #[display("0002:Adds index and tables for PLTs (protocol level token).")]
-    PLTSchema,
 }
 impl SchemaVersion {
     /// The latest known version of the schema.
-    const LATEST: SchemaVersion = SchemaVersion::PLTSchema;
+    const LATEST: SchemaVersion = SchemaVersion::InitialSchema;
 
     /// Parse version number into a database schema version.
     /// None if the version is unknown.
@@ -143,7 +141,6 @@ impl SchemaVersion {
         match self {
             SchemaVersion::Empty => false,
             SchemaVersion::InitialSchema => false,
-            SchemaVersion::PLTSchema => false,
         }
     }
 
@@ -159,11 +156,7 @@ impl SchemaVersion {
                 tx.batch_execute(include_str!("../resources/m0001-initial.sql")).await?;
                 SchemaVersion::InitialSchema
             }
-            SchemaVersion::InitialSchema => {
-                tx.batch_execute(include_str!("../resources/m0002-PLT.sql")).await?;
-                SchemaVersion::PLTSchema
-            }
-            SchemaVersion::PLTSchema => unimplemented!(
+            SchemaVersion::InitialSchema => unimplemented!(
                 "No migration implemented for database schema version {}",
                 self.as_i64()
             ),

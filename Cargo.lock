@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "concordium-rust-sdk"
-version = "6.0.0"
+version = "7.0.0-alpha"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "concordium_base"
-version = "7.0.0"
+version = "8.0.0-alpha"
 dependencies = [
  "aes",
  "anyhow",
@@ -734,8 +734,9 @@ dependencies = [
 
 [[package]]
 name = "concordium_base_derive"
-version = "1.0.0"
+version = "1.1.0-alpha"
 dependencies = [
+ "convert_case 0.8.0",
  "darling",
  "proc-macro-crate 3.3.0",
  "proc-macro2",
@@ -754,6 +755,15 @@ name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
+
+[[package]]
+name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "core-foundation"
@@ -940,7 +950,7 @@ version = "0.99.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
 dependencies = [
- "convert_case",
+ "convert_case 0.4.0",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -2045,7 +2055,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
