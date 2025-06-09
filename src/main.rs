@@ -185,21 +185,31 @@ impl PrepareStatements for PreparedStatements {
         let cis2_increase_total_supply = client
             .as_mut()
             .prepare(
-                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
-VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
-ON CONFLICT (index, subindex, token_id)
-DO UPDATE SET total_supply = cis2_tokens.total_supply + EXCLUDED.total_supply
-RETURNING id",
+                "INSERT INTO cis2_tokens (
+                    index, 
+                    subindex, 
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+                ON CONFLICT (index, subindex, token_id)
+                DO UPDATE SET total_supply = cis2_tokens.total_supply + EXCLUDED.total_supply
+                RETURNING id",
             )
             .await?;
         let cis2_decrease_total_supply = client
             .as_mut()
             .prepare(
-                "INSERT INTO cis2_tokens (index, subindex, token_id, total_supply)
-VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
-ON CONFLICT (index, subindex, token_id)
-DO UPDATE SET total_supply = cis2_tokens.total_supply - EXCLUDED.total_supply
-RETURNING id",
+                "INSERT INTO cis2_tokens (
+                    index, 
+                    subindex, 
+                    token_id, 
+                    total_supply
+                )
+                VALUES ($1, $2, $3, CAST($4 AS TEXT):: NUMERIC)
+                ON CONFLICT (index, subindex, token_id)
+                DO UPDATE SET total_supply = cis2_tokens.total_supply - EXCLUDED.total_supply
+                RETURNING id",
             )
             .await?;
 
@@ -260,6 +270,7 @@ impl PreparedStatements {
             let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
             tx.query_opt(&self.insert_cti, &values).await?;
         }
+
         Ok(())
     }
 
@@ -374,7 +385,7 @@ impl PreparedStatements {
 
     /// Check whether the summary contains any CIS2 events, and if so,
     /// parse them and insert them into the `cis2_tokens` table.
-    async fn insert_cis2(
+    async fn insert_cis2_tokens(
         &self,
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
@@ -442,7 +453,7 @@ async fn insert_block(
         prepared
             .insert_transaction(&db_tx, block_hash, block_time, block_height, transaction)
             .await?;
-        prepared.insert_cis2(&db_tx, &transaction.summary).await?;
+        prepared.insert_cis2_tokens(&db_tx, &transaction.summary).await?;
     }
     for special in special_events.iter() {
         prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
@@ -631,9 +642,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = {
-        let args = Args::clap()
-            // .setting(AppSettings::ArgRequiredElseHelp)
-            .global_setting(AppSettings::ColoredHelp);
+        let args = Args::clap().global_setting(AppSettings::ColoredHelp);
         let matches = args.get_matches();
         Args::from_clap(&matches)
     };
