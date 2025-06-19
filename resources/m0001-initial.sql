@@ -1,4 +1,4 @@
--- Table of all tranasction/protocol event summaries that affect an account, contract, or PLT (protocol-level-token).
+-- Table of all tranasction/protocol event summaries that affect an account, or contract.
 CREATE TABLE IF NOT EXISTS summaries(
              id SERIAL8 PRIMARY KEY UNIQUE,
              block BYTEA NOT NULL,
@@ -40,5 +40,5 @@ CREATE TABLE IF NOT EXISTS cis2_tokens(
              UNIQUE (index, subindex, token_id));
 
 -- Index by contract address containing the token. This is needed to efficiently
--- execute the query (give me all tokens in the given contract).
+-- execute the query "Give me all tokens in the given contract".
 CREATE INDEX IF NOT EXISTS cis2_tokens_address ON cis2_tokens (index, subindex);

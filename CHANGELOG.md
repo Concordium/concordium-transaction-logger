@@ -2,13 +2,12 @@
 
 ## Unreleased changes
 
-Database schema version: 2
+Database schema version: 1
 
 ### Added
 
-- Add indexer logic to fill the plt token tables with data.
+- Affected accounts now include accounts that have their plt balance changed as part of block item summary outcomes.
 - Added database migration logic.
-- Added database schema version 2 with tables for tracking PLT tokens.
 
 ## 0.10.0
 
