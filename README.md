@@ -212,6 +212,26 @@ e.g., using
 git submodule update --init --recursive
 ```
 
+### Running
+
+To quickly get a PostgreSQL database instance running using [docker.io](https://www.docker.com/) the following command can be used:
+
+```
+docker run -p 5432:5432 -e POSTGRES_PASSWORD=password -e POSTGRES_DB="transaction-outcome" --rm postgres
+```
+
+The command to run the indexer with a remote node:
+
+```
+cargo run -- --node https://grpc.stagenet.concordium.com:20000 --db "host=localhost dbname=transaction-outcome user=postgres password=password port=5432" --log-level info
+```
+
+The command to run the indexer with a local node:
+
+```
+cargo run -- --node http://localhost:20000 --db "host=localhost dbname=transaction-outcome user=postgres password=password port=5432" --log-level info
+```
+
 ### Database schema migrations
 
 Database schema migration is handled in the [file](./src/migrations.rs).

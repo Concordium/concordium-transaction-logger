@@ -98,11 +98,18 @@ impl QueryStatements {
         // reason for this appears to be the postgresql query planner which chooses
         // a wrong approach for small limits for the database we have.
         let query_account_statement_asc = {
-            let statement = "SELECT ati.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM ati JOIN summaries ON ati.summary = summaries.id
- WHERE ati.account = $1 AND ati.id >= $2
- ORDER BY ati.id ASC, summaries.id ASC LIMIT $3";
+            let statement = "   
+                SELECT 
+                    ati.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM ati JOIN summaries ON ati.summary = summaries.id
+                WHERE ati.account = $1 AND ati.id >= $2
+                ORDER BY ati.id ASC, summaries.id ASC 
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -111,11 +118,19 @@ impl QueryStatements {
         };
 
         let query_contract_statement_asc = {
-            let statement = "SELECT cti.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM cti JOIN summaries ON cti.summary = summaries.id
- WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id >= $3
- ORDER BY cti.id ASC, summaries.id ASC LIMIT $4";
+            let statement = "   
+                SELECT 
+                    cti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM cti 
+                JOIN summaries ON cti.summary = summaries.id
+                WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id >= $3
+                ORDER BY cti.id ASC, summaries.id ASC 
+                LIMIT $4
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -124,11 +139,19 @@ impl QueryStatements {
         };
 
         let query_account_statement_desc = {
-            let statement = "SELECT ati.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM ati JOIN summaries ON ati.summary = summaries.id
- WHERE ati.account = $1 AND ati.id <= $2
- ORDER BY ati.id DESC, summaries.id DESC LIMIT $3";
+            let statement = "   
+                SELECT 
+                    ati.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM ati 
+                JOIN summaries ON ati.summary = summaries.id
+                WHERE ati.account = $1 AND ati.id <= $2
+                ORDER BY ati.id DESC, summaries.id DESC 
+                LIMIT $3
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
@@ -137,17 +160,26 @@ impl QueryStatements {
         };
 
         let query_contract_statement_desc = {
-            let statement = "SELECT cti.id, summaries.block, summaries.timestamp, \
-                             summaries.height, summaries.summary
- FROM cti JOIN summaries ON cti.summary = summaries.id
- WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id <= $3
- ORDER BY cti.id DESC, summaries.id DESC LIMIT $4";
+            let statement = "   
+                SELECT 
+                    cti.id, 
+                    summaries.block, 
+                    summaries.timestamp,
+                    summaries.height, 
+                    summaries.summary
+                FROM cti 
+                JOIN summaries ON cti.summary = summaries.id
+                WHERE cti.index = $1 AND cti.subindex = $2 AND cti.id <= $3
+                ORDER BY cti.id DESC, summaries.id DESC 
+                LIMIT $4
+            ";
             if prepared {
                 QueryStatement::Prepared(client.prepare(statement).await?)
             } else {
                 QueryStatement::Raw(statement)
             }
         };
+
         Ok(Self {
             query_account_statement_asc,
             query_contract_statement_asc,
