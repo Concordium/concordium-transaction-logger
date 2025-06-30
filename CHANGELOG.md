@@ -2,6 +2,14 @@
 
 ## Unreleased changes
 
+## [0.12.0] - 2025-06-30
+
+Database schema version: 1
+
+### Changed
+
+- Update `rust-sdk` submodule link dependency.
+
 ## [0.11.0] - 2025-06-25
 
 Database schema version: 1
