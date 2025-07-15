@@ -6,7 +6,7 @@
 
 ### Changed
 
-- Update `rust-sdk` submodule link dependency.
+- Update base submodule in order to support PLT pause 
 
 ## [0.12.0] - 2025-06-30
 
