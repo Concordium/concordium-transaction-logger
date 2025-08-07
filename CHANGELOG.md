@@ -2,6 +2,12 @@
 
 ## Unreleased changes
 
+## [0.14.0] - 2025-08-07
+
+### Changed
+
+- Update Rust SDK submodule in order to fix JSON serialization of `RejectReason`
+
 ## [0.13.0] - 2025-07-15
 
 ### Changed
