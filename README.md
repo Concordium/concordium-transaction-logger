@@ -71,8 +71,7 @@ account. Only finalized transactions are logged.
 
 The database must exist before the logger starts.
 
-If correct tables exist in the database then they will be used, otherwise the
-[schema.sql](./resources/schema.sql) script will be executed to create the
+When running the `transaction-logger` binary, it will check the current database schema version and execute all remaining database [migrations](./resources/) until the `SchemaVersion::LATEST` is reached to create the
 tables and indices that are required.
 
 There are two sets of tables. The first three tables, `ati`, `cti`, and
