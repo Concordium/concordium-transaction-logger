@@ -126,6 +126,8 @@ pub enum SchemaVersion {
          cis2 tokens."
     )]
     InitialSchema,
+    #[display("0002: Adding account address bindings to public keys.")]
+    AccountsPublicKeyBindings,
 }
 impl SchemaVersion {
     /// The latest known version of the schema.
@@ -152,6 +154,7 @@ impl SchemaVersion {
         match self {
             SchemaVersion::Empty => false,
             SchemaVersion::InitialSchema => false,
+            SchemaVersion::AccountsPublicKeyBindings => false,
         }
     }
 
@@ -168,7 +171,11 @@ impl SchemaVersion {
                     .await?;
                 SchemaVersion::InitialSchema
             }
-            SchemaVersion::InitialSchema => unimplemented!(
+            SchemaVersion::InitialSchema => {
+                tx.batch_execute(include_str!("..//resources/m0002-accounts-public-key-bindings.sql")).await?;
+                SchemaVersion::AccountsPublicKeyBindings
+            }
+            SchemaVersion::AccountsPublicKeyBindings => unimplemented!(
                 "No migration implemented for database schema version {}",
                 self.as_i64()
             ),
