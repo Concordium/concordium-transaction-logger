@@ -1,8 +1,12 @@
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
+    base::transactions::AccountAccessStructure,
     cis2::{self, TokenAmount, TokenId},
-    common::{types::Timestamp, SerdeSerialize},
+    common::{
+        types::{CredentialIndex, KeyIndex, Timestamp},
+        SerdeSerialize,
+    },
     id::types::AccountAddress,
     types::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
@@ -11,7 +15,7 @@ use concordium_rust_sdk::{
     v2::{self, FinalizedBlockInfo},
 };
 use futures::TryStreamExt;
-use std::{collections::HashSet, convert::TryFrom, hash::Hash};
+use std::{collections::{HashSet, HashMap}, convert::TryFrom, hash::Hash};
 use structopt::StructOpt;
 use tokio_postgres::{
     types::{Json, ToSql},

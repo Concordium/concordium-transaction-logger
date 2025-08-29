@@ -3,6 +3,8 @@ use anyhow::Context;
 use std::cmp::Ordering;
 use tokio_postgres::Transaction;
 
+mod m0002_acoount_public_key_binding;
+
 /// Ensure the current database schema version is compatible with the supported
 /// schema version.
 pub async fn ensure_compatible_schema_version(
@@ -131,7 +133,7 @@ pub enum SchemaVersion {
 }
 impl SchemaVersion {
     /// The latest known version of the schema.
-    const LATEST: SchemaVersion = SchemaVersion::InitialSchema;
+    const LATEST: SchemaVersion = SchemaVersion::AccountsPublicKeyBindings;
 
     /// Parse version number into a database schema version.
     /// None if the version is unknown.
@@ -172,7 +174,10 @@ impl SchemaVersion {
                 SchemaVersion::InitialSchema
             }
             SchemaVersion::InitialSchema => {
-                tx.batch_execute(include_str!("..//resources/m0002-accounts-public-key-bindings.sql")).await?;
+                tx.batch_execute(include_str!(
+                    "..//resources/m0002-accounts-public-key-bindings.sql"
+                ))
+                .await?;
                 SchemaVersion::AccountsPublicKeyBindings
             }
             SchemaVersion::AccountsPublicKeyBindings => unimplemented!(
