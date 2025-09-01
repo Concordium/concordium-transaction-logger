@@ -58,9 +58,9 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
         let access_structure: AccountAccessStructure = (&acc_info).into();
         let is_simple_account = access_structure.num_keys() == 1;
         for x in access_structure.keys {
-            let cred_index = x.0.index as u32;
+            let cred_index = x.0.index as i32;
             for y in x.1.keys {
-                let key_index = y.0 .0 as u32;
+                let key_index = y.0 .0 as i32;
                 let VerifyKey::Ed25519VerifyKey(key) = y.1;
                 let public_key = key.as_ref();
                 let _ = tx
