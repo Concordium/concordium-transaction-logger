@@ -17,12 +17,12 @@ use postgres::DatabaseClient;
 /// the service runs with regards to connections to concordium node(s), db, and
 /// logging.
 pub struct SharedIndexerArgs {
-    pub endpoint:            Vec<v2::Endpoint>,
-    pub db_config:           postgres::Config,
-    pub num_parallel:        u32,
-    pub max_behind:          u32,
-    pub connect_timeout:     u32,
-    pub request_timeout:     u32,
+    pub endpoint: Vec<v2::Endpoint>,
+    pub db_config: postgres::Config,
+    pub num_parallel: u32,
+    pub max_behind: u32,
+    pub connect_timeout: u32,
+    pub request_timeout: u32,
     pub max_connect_attemps: u32,
 }
 
@@ -38,7 +38,7 @@ pub trait PrepareStatements: Sized {
 /// A wrapper around a [`DatabaseClient`] that maintains prepared statements.
 pub struct DBConn<P> {
     /// DatabaseClient to be used when interacting with the database.
-    pub client:   DatabaseClient,
+    pub client: DatabaseClient,
     /// A collection of prepared statements for the associated [`client`] to be
     /// used when interacting with the database
     pub prepared: P,
@@ -52,9 +52,7 @@ struct DBConfiguration {
 
 impl DBConfiguration {
     fn new(pg_config: postgres::Config) -> Self {
-        Self {
-            pg_config,
-        }
+        Self { pg_config }
     }
 
     /// Create a [`DBConn`] connection, and run the database migration task.
@@ -90,10 +88,7 @@ impl DBConfiguration {
             .await
             .context("Failed to prepate statements for db client")?;
 
-        Ok(DBConn {
-            client,
-            prepared,
-        })
+        Ok(DBConn { client, prepared })
     }
 
     /// Try to connect to the database with exponential backoff, at most
@@ -133,19 +128,23 @@ impl DBConfiguration {
 }
 
 impl<P> AsRef<DatabaseClient> for DBConn<P> {
-    fn as_ref(&self) -> &DatabaseClient { &self.client }
+    fn as_ref(&self) -> &DatabaseClient {
+        &self.client
+    }
 }
 
 impl<P> AsMut<DatabaseClient> for DBConn<P> {
-    fn as_mut(&mut self) -> &mut DatabaseClient { &mut self.client }
+    fn as_mut(&mut self) -> &mut DatabaseClient {
+        &mut self.client
+    }
 }
 
 /// Holds information pertaining to block insertion into database.
 pub struct BlockInsertSuccess {
     /// The time it took to insert the block.
-    pub duration:     chrono::Duration,
+    pub duration: chrono::Duration,
     /// The hash of the inserted block.
-    pub block_hash:   BlockHash,
+    pub block_hash: BlockHash,
     /// The height of the inserted block.
     pub block_height: AbsoluteBlockHeight,
 }
@@ -256,8 +255,11 @@ async fn use_db<D, P, H>(
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
-    H: DatabaseHooks<D, P>, {
-    let start_from = H::on_request_max_height(&db.client).await?.map_or(0.into(), |h| h.next());
+    H: DatabaseHooks<D, P>,
+{
+    let start_from = H::on_request_max_height(&db.client)
+        .await?
+        .map_or(0.into(), |h| h.next());
 
     start_from_sender
         .send(start_from)
@@ -350,7 +352,8 @@ async fn db_process<D, P, H>(
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
-    H: DatabaseHooks<D, P>, {
+    H: DatabaseHooks<D, P>,
+{
     let mut db_config = DBConfiguration::new(pg_config);
 
     let mut sr = shutdown_receiver.clone();
@@ -384,16 +387,21 @@ async fn node_process<D, H>(
     hooks: &mut H,
 ) -> Result<(), NodeError>
 where
-    H: NodeHooks<D>, {
+    H: NodeHooks<D>,
+{
     // Use TLS if the URI scheme is HTTPS.
     // This uses whatever system certificates have been installed as trusted roots.
     let node_ep = if node_ep.uri().scheme() == Some(&concordium_rust_sdk::v2::Scheme::HTTPS) {
-        node_ep.tls_config(ClientTlsConfig::new()).map_err(NodeError::ConnectionError)?
+        node_ep
+            .tls_config(ClientTlsConfig::new())
+            .map_err(NodeError::ConnectionError)?
     } else {
         node_ep
     };
 
-    let mut node = v2::Client::new(node_ep).await.map_err(NodeError::ConnectionError)?;
+    let mut node = v2::Client::new(node_ep)
+        .await
+        .map_err(NodeError::ConnectionError)?;
     let timeout = std::time::Duration::from_secs(max_behind.into());
 
     hooks.on_use_node(&mut node).await?;
@@ -419,7 +427,9 @@ where
         if has_error {
             // we have processed the blocks we can, but further queries on the same stream
             // will fail since the stream signalled an error.
-            return Err(NodeError::OtherError(anyhow!("Finalized block stream dropped.")));
+            return Err(NodeError::OtherError(anyhow!(
+                "Finalized block stream dropped."
+            )));
         }
     }
 }
@@ -438,8 +448,12 @@ where
     P: PrepareStatements + Send + Sync + 'static,
     D: Send + Sync + 'static,
     DH: DatabaseHooks<D, P> + Send + Sync + 'static,
-    NH: NodeHooks<D>, {
-    anyhow::ensure!(!app_config.endpoint.is_empty(), "At least one node must be provided.");
+    NH: NodeHooks<D>,
+{
+    anyhow::ensure!(
+        !app_config.endpoint.is_empty(),
+        "At least one node must be provided."
+    );
     let db_config = app_config.db_config;
 
     // This program is set up as follows.
@@ -523,16 +537,28 @@ where
 
         match node_result {
             Err(NodeError::ConnectionError(e)) => {
-                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+                log::warn!(
+                    "Failed to connect to node due to {:#}. Will attempt another node.",
+                    e
+                );
             }
             Err(NodeError::OtherError(e)) => {
-                log::warn!("Node query failed due to: {:#}. Will attempt another node.", e);
+                log::warn!(
+                    "Node query failed due to: {:#}. Will attempt another node.",
+                    e
+                );
             }
             Err(NodeError::NetworkError(e)) => {
-                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+                log::warn!(
+                    "Failed to connect to node due to {:#}. Will attempt another node.",
+                    e
+                );
             }
             Err(NodeError::QueryError(e)) => {
-                log::warn!("Failed to connect to node due to {:#}. Will attempt another node.", e);
+                log::warn!(
+                    "Failed to connect to node due to {:#}. Will attempt another node.",
+                    e
+                );
             }
             Err(NodeError::Timeout) => {
                 log::warn!("Node too far behind. Will attempt another node.");

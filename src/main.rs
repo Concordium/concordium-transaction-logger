@@ -39,7 +39,7 @@ struct Args {
         use_delimiter = true,
         env = "TRANSACTION_LOGGER_NODES"
     )]
-    endpoint:        Vec<v2::Endpoint>,
+    endpoint: Vec<v2::Endpoint>,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
@@ -47,14 +47,14 @@ struct Args {
         help = "Database connection string.",
         env = "TRANSACTION_LOGGER_DB_STRING"
     )]
-    config:          postgres::Config,
+    config: postgres::Config,
     #[structopt(
         long = "log-level",
         default_value = "off",
         help = "Maximum log level.",
         env = "TRANSACTION_LOGGER_LOG_LEVEL"
     )]
-    log_level:       log::LevelFilter,
+    log_level: log::LevelFilter,
     #[structopt(
         long = "num-parallel",
         default_value = "1",
@@ -63,7 +63,7 @@ struct Args {
                 take advantage of parallelism in queries.",
         env = "TRANSACTION_LOGGER_NUM_PARALLEL_QUERIES"
     )]
-    num_parallel:    u32,
+    num_parallel: u32,
     #[structopt(
         long = "max-behind-seconds",
         default_value = "240",
@@ -71,7 +71,7 @@ struct Args {
                 node is given up and another one is tried.",
         env = "TRANSACTION_LOGGER_MAX_BEHIND_SECONDS"
     )]
-    max_behind:      u32,
+    max_behind: u32,
     #[structopt(
         long = "connect-timeout",
         default_value = "10",
@@ -102,14 +102,14 @@ pub enum BorrowedDatabaseSummaryEntry<'a> {
 
 pub struct SummaryRow<'a> {
     /// Hash of the block the row applies to.
-    pub block_hash:   BlockHash,
+    pub block_hash: BlockHash,
     /// Slot time of the block the row applies to.
-    pub block_time:   Timestamp,
+    pub block_time: Timestamp,
     /// Block height stored in the database.
     pub block_height: AbsoluteBlockHeight,
     /// Summary of the item. Either a user-generated transaction, or a protocol
     /// event that affected the account or contract.
-    pub summary:      BorrowedDatabaseSummaryEntry<'a>,
+    pub summary: BorrowedDatabaseSummaryEntry<'a>,
 }
 
 #[repr(transparent)]
@@ -117,7 +117,9 @@ pub struct SummaryRow<'a> {
 struct AccountAddressEq(AccountAddress);
 
 impl From<AccountAddressEq> for AccountAddress {
-    fn from(aae: AccountAddressEq) -> Self { aae.0 }
+    fn from(aae: AccountAddressEq) -> Self {
+        aae.0
+    }
 }
 
 impl PartialEq for AccountAddressEq {
@@ -136,11 +138,13 @@ impl Hash for AccountAddressEq {
 }
 
 impl AsRef<AccountAddressEq> for AccountAddress {
-    fn as_ref(&self) -> &AccountAddressEq { unsafe { std::mem::transmute(self) } }
+    fn as_ref(&self) -> &AccountAddressEq {
+        unsafe { std::mem::transmute(self) }
+    }
 }
 
 struct BlockItemSummaryWithCanonicalAddresses {
-    pub(crate) summary:   BlockItemSummary,
+    pub(crate) summary: BlockItemSummary,
     /// Affected addresses, resolved to canonical addresses and without
     /// duplicates.
     pub(crate) addresses: Vec<AccountAddress>,
@@ -148,18 +152,21 @@ struct BlockItemSummaryWithCanonicalAddresses {
 
 /// Data sent by the node query task to the transaction insertion task.
 /// Contains all the information needed to build the transaction index.
-type TransactionLogData =
-    (BlockInfo, Vec<BlockItemSummaryWithCanonicalAddresses>, Vec<SpecialTransactionOutcome>);
+type TransactionLogData = (
+    BlockInfo,
+    Vec<BlockItemSummaryWithCanonicalAddresses>,
+    Vec<SpecialTransactionOutcome>,
+);
 
 /// Prepared statements for all insertions. Prepared statements are
 /// per-connection so we have to re-create them each time we reconnect.
 struct PreparedStatements {
     /// Insert into the summary table.
-    insert_summary:             tokio_postgres::Statement,
+    insert_summary: tokio_postgres::Statement,
     /// Insert into the account transaction index table.
-    insert_ati:                 tokio_postgres::Statement,
+    insert_ati: tokio_postgres::Statement,
     /// Insert into the contract transaction index table.
-    insert_cti:                 tokio_postgres::Statement,
+    insert_cti: tokio_postgres::Statement,
     /// Increase the total supply of a given token.
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
@@ -169,8 +176,10 @@ struct PreparedStatements {
 #[async_trait]
 impl PrepareStatements for PreparedStatements {
     async fn prepare_all(client: &mut DatabaseClient) -> Result<Self, postgres::Error> {
-        let insert_ati =
-            client.as_mut().prepare("INSERT INTO ati (account, summary) VALUES ($1, $2)").await?;
+        let insert_ati = client
+            .as_mut()
+            .prepare("INSERT INTO ati (account, summary) VALUES ($1, $2)")
+            .await?;
         let insert_cti = client
             .as_mut()
             .prepare("INSERT INTO cti (index, subindex, summary) VALUES ($1, $2, $3)")
@@ -260,14 +269,21 @@ impl PreparedStatements {
         let id = self.insert_summary(tx, &summary_row).await?;
         for affected in affected_addresses.iter() {
             let addr_bytes: &[u8; 32] = affected.as_ref();
-            let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            let values = [
+                &&addr_bytes[..] as &(dyn ToSql + Sync),
+                &id as &(dyn ToSql + Sync),
+            ];
             tx.query_opt(&self.insert_ati, &values).await?;
         }
         // insert contracts
         for affected in ts.summary.affected_contracts() {
             let index = affected.index;
             let subindex = affected.subindex;
-            let values = [&(index as i64) as &(dyn ToSql + Sync), &(subindex as i64), &id];
+            let values = [
+                &(index as i64) as &(dyn ToSql + Sync),
+                &(subindex as i64),
+                &id,
+            ];
             tx.query_opt(&self.insert_cti, &values).await?;
         }
 
@@ -286,13 +302,11 @@ impl PreparedStatements {
         // these are canonical addresses so there is no need to resolve anything
         // additional.
         let affected_addresses = match so {
-            SpecialTransactionOutcome::BakingRewards {
-                baker_rewards,
-                ..
-            } => baker_rewards.keys().copied().collect::<Vec<_>>(),
+            SpecialTransactionOutcome::BakingRewards { baker_rewards, .. } => {
+                baker_rewards.keys().copied().collect::<Vec<_>>()
+            }
             SpecialTransactionOutcome::Mint {
-                foundation_account,
-                ..
+                foundation_account, ..
             } => vec![*foundation_account],
             SpecialTransactionOutcome::FinalizationRewards {
                 finalization_rewards,
@@ -304,29 +318,17 @@ impl PreparedStatements {
                 ..
             } => vec![*baker, *foundation_account],
             SpecialTransactionOutcome::PaydayFoundationReward {
-                foundation_account,
-                ..
+                foundation_account, ..
             } => vec![*foundation_account],
-            SpecialTransactionOutcome::PaydayAccountReward {
-                account,
-                ..
-            } => vec![*account],
+            SpecialTransactionOutcome::PaydayAccountReward { account, .. } => vec![*account],
             // the following two are only administrative events, they don't transfer to the account,
             // only to the virtual account.
-            SpecialTransactionOutcome::BlockAccrueReward {
-                ..
-            } => Vec::new(),
-            SpecialTransactionOutcome::PaydayPoolReward {
-                ..
-            } => Vec::new(),
-            SpecialTransactionOutcome::ValidatorSuspended {
-                account,
-                ..
-            } => vec![*account],
-            SpecialTransactionOutcome::ValidatorPrimedForSuspension {
-                account,
-                ..
-            } => vec![*account],
+            SpecialTransactionOutcome::BlockAccrueReward { .. } => Vec::new(),
+            SpecialTransactionOutcome::PaydayPoolReward { .. } => Vec::new(),
+            SpecialTransactionOutcome::ValidatorSuspended { account, .. } => vec![*account],
+            SpecialTransactionOutcome::ValidatorPrimedForSuspension { account, .. } => {
+                vec![*account]
+            }
         };
         let summary_row = SummaryRow {
             block_hash,
@@ -337,7 +339,10 @@ impl PreparedStatements {
         let id = self.insert_summary(tx, &summary_row).await?;
         for affected in affected_addresses.iter() {
             let addr_bytes: &[u8; 32] = affected.as_ref();
-            let values = [&&addr_bytes[..] as &(dyn ToSql + Sync), &id as &(dyn ToSql + Sync)];
+            let values = [
+                &&addr_bytes[..] as &(dyn ToSql + Sync),
+                &id as &(dyn ToSql + Sync),
+            ];
             tx.query_opt(&self.insert_ati, &values).await?;
         }
         Ok(())
@@ -358,7 +363,9 @@ impl PreparedStatements {
             &token_id.as_ref(),
             &amount.0.to_string(),
         ];
-        let id = tx.query_one(&self.cis2_increase_total_supply, &values).await?;
+        let id = tx
+            .query_one(&self.cis2_increase_total_supply, &values)
+            .await?;
         let id = id.try_get::<_, i64>(0)?;
         Ok(id)
     }
@@ -378,7 +385,9 @@ impl PreparedStatements {
             &token_id.as_ref(),
             &amount.0.to_string(),
         ];
-        let id = tx.query_one(&self.cis2_decrease_total_supply, &values).await?;
+        let id = tx
+            .query_one(&self.cis2_decrease_total_supply, &values)
+            .await?;
         let id = id.try_get::<_, i64>(0)?;
         Ok(id)
     }
@@ -394,9 +403,7 @@ impl PreparedStatements {
             for (ca, events) in effects {
                 for event in events {
                     match event {
-                        cis2::Event::Transfer {
-                            ..
-                        } => {
+                        cis2::Event::Transfer { .. } => {
                             // do nothing, tokens are not created here.
                         }
                         cis2::Event::Mint {
@@ -404,24 +411,22 @@ impl PreparedStatements {
                             ref amount,
                             ..
                         } => {
-                            self.cis2_increase_total_supply(tx, ca, token_id, amount).await?;
+                            self.cis2_increase_total_supply(tx, ca, token_id, amount)
+                                .await?;
                         }
                         cis2::Event::Burn {
                             ref token_id,
                             ref amount,
                             ..
                         } => {
-                            self.cis2_decrease_total_supply(tx, ca, token_id, amount).await?;
+                            self.cis2_decrease_total_supply(tx, ca, token_id, amount)
+                                .await?;
                         }
-                        cis2::Event::UpdateOperator {
-                            ..
-                        } => {
+                        cis2::Event::UpdateOperator { .. } => {
                             // do nothing, updating operators does not change
                             // token suply
                         }
-                        cis2::Event::TokenMetadata {
-                            ..
-                        } => {
+                        cis2::Event::TokenMetadata { .. } => {
                             // do nothing, updating token metadata does not
                             // change token supply.
                         }
@@ -453,10 +458,14 @@ async fn insert_block(
         prepared
             .insert_transaction(&db_tx, block_hash, block_time, block_height, transaction)
             .await?;
-        prepared.insert_cis2_tokens(&db_tx, &transaction.summary).await?;
+        prepared
+            .insert_cis2_tokens(&db_tx, &transaction.summary)
+            .await?;
     }
     for special in special_events.iter() {
-        prepared.insert_special(&db_tx, block_hash, block_time, block_height, special).await?;
+        prepared
+            .insert_special(&db_tx, block_hash, block_time, block_height, special)
+            .await?;
     }
     db_tx.commit().await?;
     let end = chrono::Utc::now().signed_duration_since(start);
@@ -580,7 +589,10 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         finalized_block_info: &FinalizedBlockInfo,
     ) -> Result<TransactionLogData, NodeError> {
         // Collect necessary block-specific information from the `node`
-        let binfo = node.get_block_info(finalized_block_info.height).await?.response;
+        let binfo = node
+            .get_block_info(finalized_block_info.height)
+            .await?
+            .response;
         let transaction_summaries = if binfo.transaction_count == 0 {
             Vec::new()
         } else {
@@ -629,10 +641,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                     }
                 }
             }
-            with_addresses.push(BlockItemSummaryWithCanonicalAddresses {
-                summary,
-                addresses,
-            })
+            with_addresses.push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
         }
 
         Ok((binfo, with_addresses, special_events))
@@ -658,12 +667,12 @@ async fn main() -> anyhow::Result<()> {
 
     let run_service_args = SharedIndexerArgs {
         max_connect_attemps: MAX_CONNECT_ATTEMPTS,
-        max_behind:          args.max_behind,
-        num_parallel:        args.num_parallel,
-        connect_timeout:     args.connect_timeout,
-        request_timeout:     args.request_timeout,
-        db_config:           args.config,
-        endpoint:            args.endpoint,
+        max_behind: args.max_behind,
+        num_parallel: args.num_parallel,
+        connect_timeout: args.connect_timeout,
+        request_timeout: args.request_timeout,
+        db_config: args.config,
+        endpoint: args.endpoint,
     };
 
     run_service::<TransactionLogData, PreparedStatements, DatabaseState, CanonicalAddressCache>(
