@@ -53,8 +53,10 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     // TODO: make concurent run
     for account in accounts {
         let address = account.0.as_ref();
-        let acc_info =
-            client.get_account_info(&account.into(), BlockIdentifier::LastFinal).await?.response;
+        let acc_info = client
+            .get_account_info(&account.into(), BlockIdentifier::LastFinal)
+            .await?
+            .response;
         let access_structure: AccountAccessStructure = (&acc_info).into();
         let is_simple_account = access_structure.num_keys() == 1;
         for x in access_structure.keys {
@@ -64,14 +66,17 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
                 let VerifyKey::Ed25519VerifyKey(key) = y.1;
                 let public_key = key.as_ref();
                 let _ = tx
-                    .execute(&statement, &[
-                        &address,
-                        &public_key,
-                        &cred_index,
-                        &key_index,
-                        &is_simple_account,
-                        &true,
-                    ])
+                    .execute(
+                        &statement,
+                        &[
+                            &address,
+                            &public_key,
+                            &cred_index,
+                            &key_index,
+                            &is_simple_account,
+                            &true,
+                        ],
+                    )
                     .await?;
             }
         }
