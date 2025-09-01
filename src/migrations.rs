@@ -36,11 +36,20 @@ pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Resul
     ensure_migrations_table(db_connection).await?;
     let mut current = current_schema_version(db_connection).await?;
     log::info!("Current database schema version {}", current.as_i64());
-    log::info!("Latest database schema version {}", SchemaVersion::LATEST.as_i64());
+    log::info!(
+        "Latest database schema version {}",
+        SchemaVersion::LATEST.as_i64()
+    );
     while current < SchemaVersion::LATEST {
-        log::info!("Running migration from database schema version {}", current.as_i64());
+        log::info!(
+            "Running migration from database schema version {}",
+            current.as_i64()
+        );
         let new_version = current.migration_to_next(db_connection).await?;
-        log::info!("Migrated database schema to version {} successfully", new_version.as_i64());
+        log::info!(
+            "Migrated database schema to version {} successfully",
+            new_version.as_i64()
+        );
         current = new_version
     }
     Ok(())
@@ -76,7 +85,7 @@ pub async fn ensure_latest_schema_version(
 #[display("Migration {version}:{description}")]
 struct Migration {
     /// Version number for the database schema.
-    version:     i64,
+    version: i64,
     /// Short description of the point of the migration.
     description: String,
     /// Whether the migration does a breaking change to the database schema.
@@ -88,7 +97,7 @@ struct Migration {
 impl From<SchemaVersion> for Migration {
     fn from(value: SchemaVersion) -> Self {
         Migration {
-            version:     value.as_i64(),
+            version: value.as_i64(),
             description: value.to_string(),
             destructive: value.is_destructive(),
         }
@@ -129,7 +138,9 @@ impl SchemaVersion {
     }
 
     /// Convert to the integer representation used as version in the database.
-    fn as_i64(self) -> i64 { self as i64 }
+    fn as_i64(self) -> i64 {
+        self as i64
+    }
 
     /// Whether introducing the database schema version is destructive, meaning
     /// not backwards compatible.
@@ -153,7 +164,8 @@ impl SchemaVersion {
         let mut tx = database_client.as_mut().transaction().await?;
         let new_version = match self {
             SchemaVersion::Empty => {
-                tx.batch_execute(include_str!("../resources/m0001-initial.sql")).await?;
+                tx.batch_execute(include_str!("../resources/m0001-initial.sql"))
+                    .await?;
                 SchemaVersion::InitialSchema
             }
             SchemaVersion::InitialSchema => unimplemented!(

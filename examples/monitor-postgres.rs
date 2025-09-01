@@ -15,14 +15,14 @@ use transaction_logger::postgres::{DatabaseClient, QueryOrder};
 #[derive(StructOpt)]
 struct App {
     #[structopt(long = "account")]
-    account:   AccountAddress,
+    account: AccountAddress,
     #[structopt(
         long = "db",
         default_value = "host=localhost dbname=transaction-outcome user=postgres \
                          password=password port=5432",
         help = "Database connection string."
     )]
-    config:    tokio_postgres::Config,
+    config: tokio_postgres::Config,
     #[structopt(
         long = "wait-time",
         help = "Database polling interval in ms.",
@@ -44,9 +44,7 @@ async fn main() -> anyhow::Result<()> {
     // get the ID where new events will start at.
     let start_id = {
         let rows = db
-            .query_account(&addr, 1, QueryOrder::Descending {
-                start: None,
-            })
+            .query_account(&addr, 1, QueryOrder::Descending { start: None })
             .await?;
         rows.fold(0, |_, row| async move { row.id + 1 }).await
     };
@@ -60,9 +58,13 @@ async fn main() -> anyhow::Result<()> {
         let mut next_start_id = start_id;
         loop {
             let rows = db
-                .query_account(&addr, 100, QueryOrder::Ascending {
-                    start: Some(next_start_id),
-                })
+                .query_account(
+                    &addr,
+                    100,
+                    QueryOrder::Ascending {
+                        start: Some(next_start_id),
+                    },
+                )
                 .await?;
             // in the fold closure below we only need a reference to the channel
             // but we need to capture count and rows by value, so we need to use move

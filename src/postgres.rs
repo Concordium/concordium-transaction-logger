@@ -36,16 +36,16 @@ pub enum DatabaseSummaryEntry {
 pub struct DatabaseRow {
     /// Internal id of the row. This can be used in repeated queries to get more
     /// pages of results.
-    pub id:           i64,
+    pub id: i64,
     /// Hash of the block the row applies to.
-    pub block_hash:   BlockHash,
+    pub block_hash: BlockHash,
     /// Slot time of the block the row applies to.
-    pub block_time:   Timestamp,
+    pub block_time: Timestamp,
     /// Block height stored in the database.
     pub block_height: AbsoluteBlockHeight,
     /// Summary of the item. Either a user-generated transaction, or a protocol
     /// event that affected the account or contract.
-    pub summary:      DatabaseSummaryEntry,
+    pub summary: DatabaseSummaryEntry,
 }
 
 impl DatabaseSummaryEntry {
@@ -72,14 +72,14 @@ enum QueryStatement {
 struct QueryStatements {
     /// Prepared statement that is used to query accounts in ascending order.
     /// It has 3 placeholders, for account address, `id` start and limit.
-    query_account_statement_asc:   QueryStatement,
+    query_account_statement_asc: QueryStatement,
     /// Prepared statement that is used to query contracts in ascending order.
     /// It has 4 placeholders, for contract index and subindex, `id` start and
     /// limit.
-    query_contract_statement_asc:  QueryStatement,
+    query_contract_statement_asc: QueryStatement,
     /// Prepared statement that is used to query contracts in descending order.
     /// It has 3 placeholders, for account address, `id` start and limit.
-    query_account_statement_desc:  QueryStatement,
+    query_account_statement_desc: QueryStatement,
     /// Prepared statement that is used to query contracts in descending order.
     /// It has 4 placeholders, for contract index and subindex, `id` start and
     /// limit.
@@ -202,8 +202,8 @@ pub struct DatabaseClient {
     /// Connection handle that can be used to drop the connection.
     /// The connection is spawned in a background tokio task.
     connection_handle: JoinHandle<Result<(), tokio_postgres::Error>>,
-    database_client:   tokio_postgres::Client,
-    statements:        QueryStatements,
+    database_client: tokio_postgres::Client,
+    statements: QueryStatements,
 }
 
 impl DatabaseClient {
@@ -217,14 +217,18 @@ impl DatabaseClient {
 /// This implementation enables direct queries on the underlying database
 /// client.
 impl AsRef<tokio_postgres::Client> for DatabaseClient {
-    fn as_ref(&self) -> &tokio_postgres::Client { &self.database_client }
+    fn as_ref(&self) -> &tokio_postgres::Client {
+        &self.database_client
+    }
 }
 
 /// This implementation enables direct queries on the underlying database
 /// client such as [Client::transaction](https://docs.rs/tokio-postgres/*/tokio_postgres/struct.Client.html#method.transaction)
 /// that require mutable access to the underlying client
 impl AsMut<tokio_postgres::Client> for DatabaseClient {
-    fn as_mut(&mut self) -> &mut tokio_postgres::Client { &mut self.database_client }
+    fn as_mut(&mut self) -> &mut tokio_postgres::Client {
+        &mut self.database_client
+    }
 }
 
 impl DatabaseClient {
@@ -237,7 +241,8 @@ impl DatabaseClient {
         tls: T,
     ) -> Result<DatabaseClient, tokio_postgres::Error>
     where
-        T::Stream: Send + 'static, {
+        T::Stream: Send + 'static,
+    {
         let (database_client, connection) = config.connect(tls).await?;
         let connection_handle = tokio::spawn(connection);
         let statements = QueryStatements::create(&database_client, false).await?;
@@ -256,7 +261,8 @@ impl DatabaseClient {
         tls: T,
     ) -> Result<DatabaseClient, tokio_postgres::Error>
     where
-        T::Stream: Send + 'static, {
+        T::Stream: Send + 'static,
+    {
         let (database_client, connection) = config.connect(tls).await?;
         let connection_handle = tokio::spawn(connection);
         let statements = QueryStatements::create(&database_client, true).await?;
@@ -288,7 +294,8 @@ impl DatabaseClient {
     where
         P: BorrowToSql,
         I: IntoIterator<Item = P>,
-        I::IntoIter: ExactSizeIterator, {
+        I::IntoIter: ExactSizeIterator,
+    {
         match st {
             QueryStatement::Raw(r) => self.as_ref().query_raw(*r, params).await,
             QueryStatement::Prepared(p) => self.as_ref().query_raw(p, params).await,
@@ -306,12 +313,14 @@ impl DatabaseClient {
         order: QueryOrder,
     ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         let (statement, start) = match order {
-            QueryOrder::Ascending {
-                start,
-            } => (&self.statements.query_account_statement_asc, start.unwrap_or(i64::MIN)),
-            QueryOrder::Descending {
-                start,
-            } => (&self.statements.query_account_statement_desc, start.unwrap_or(i64::MAX)),
+            QueryOrder::Ascending { start } => (
+                &self.statements.query_account_statement_asc,
+                start.unwrap_or(i64::MIN),
+            ),
+            QueryOrder::Descending { start } => (
+                &self.statements.query_account_statement_desc,
+                start.unwrap_or(i64::MAX),
+            ),
         };
         let acc_raw: &[u8] = acc.as_ref();
         let params = [
@@ -335,12 +344,14 @@ impl DatabaseClient {
         order: QueryOrder,
     ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         let (statement, start) = match order {
-            QueryOrder::Ascending {
-                start,
-            } => (&self.statements.query_contract_statement_asc, start.unwrap_or(i64::MIN)),
-            QueryOrder::Descending {
-                start,
-            } => (&self.statements.query_contract_statement_desc, start.unwrap_or(i64::MAX)),
+            QueryOrder::Ascending { start } => (
+                &self.statements.query_contract_statement_asc,
+                start.unwrap_or(i64::MIN),
+            ),
+            QueryOrder::Descending { start } => (
+                &self.statements.query_contract_statement_desc,
+                start.unwrap_or(i64::MAX),
+            ),
         };
 
         let params: [i64; 4] = [c.index as i64, c.subindex as i64, start, limit];
@@ -356,10 +367,8 @@ impl DatabaseClient {
         acc: &AccountAddress,
         start: Option<i64>,
     ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
-        self.query_account(acc, i64::MAX, QueryOrder::Ascending {
-            start,
-        })
-        .await
+        self.query_account(acc, i64::MAX, QueryOrder::Ascending { start })
+            .await
     }
 
     /// Return all transactions affecting the contract, starting with the given
@@ -369,10 +378,8 @@ impl DatabaseClient {
         addr: ContractAddress,
         start: Option<i64>,
     ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
-        self.query_contract(addr, i64::MAX, QueryOrder::Ascending {
-            start,
-        })
-        .await
+        self.query_contract(addr, i64::MAX, QueryOrder::Ascending { start })
+            .await
     }
 }
 
