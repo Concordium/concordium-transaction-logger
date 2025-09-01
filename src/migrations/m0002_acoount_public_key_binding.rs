@@ -44,7 +44,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
             r#"INSERT INTO account_public_key_bindings 
         (address, public_key, credential_index, key_index, is_simple_account, active)
         VALUES
-        ($1, $2, $3, $4, $5, %6)
+        ($1, $2, $3, $4, $5, $6)
         "#,
         )
         .await?;
