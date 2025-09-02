@@ -1,7 +1,10 @@
 use crate::postgres::DatabaseClient;
 use anyhow::Context;
+use concordium_rust_sdk::v2;
 use std::cmp::Ordering;
 use tokio_postgres::Transaction;
+
+mod m0002_acoount_public_key_binding;
 
 /// Ensure the current database schema version is compatible with the supported
 /// schema version.
@@ -32,7 +35,10 @@ The `transaction-logger` binary should have migrated the database schema at star
 }
 
 /// Migrate the database schema to the latest version.
-pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Result<()> {
+pub async fn run_migrations(
+    db_connection: &mut DatabaseClient,
+    endpoints: &[v2::Endpoint],
+) -> anyhow::Result<()> {
     ensure_migrations_table(db_connection).await?;
     let mut current = current_schema_version(db_connection).await?;
     log::info!("Current database schema version {}", current.as_i64());
@@ -45,7 +51,7 @@ pub async fn run_migrations(db_connection: &mut DatabaseClient) -> anyhow::Resul
             "Running migration from database schema version {}",
             current.as_i64()
         );
-        let new_version = current.migration_to_next(db_connection).await?;
+        let new_version = current.migration_to_next(db_connection, endpoints).await?;
         log::info!(
             "Migrated database schema to version {} successfully",
             new_version.as_i64()
@@ -126,10 +132,12 @@ pub enum SchemaVersion {
          cis2 tokens."
     )]
     InitialSchema,
+    #[display("0002: Adding account address bindings to public keys.")]
+    AccountsPublicKeyBindings,
 }
 impl SchemaVersion {
     /// The latest known version of the schema.
-    const LATEST: SchemaVersion = SchemaVersion::InitialSchema;
+    const LATEST: SchemaVersion = SchemaVersion::AccountsPublicKeyBindings;
 
     /// Parse version number into a database schema version.
     /// None if the version is unknown.
@@ -152,6 +160,7 @@ impl SchemaVersion {
         match self {
             SchemaVersion::Empty => false,
             SchemaVersion::InitialSchema => false,
+            SchemaVersion::AccountsPublicKeyBindings => false,
         }
     }
 
@@ -159,6 +168,7 @@ impl SchemaVersion {
     async fn migration_to_next(
         &self,
         database_client: &mut DatabaseClient,
+        endpoints: &[v2::Endpoint],
     ) -> anyhow::Result<SchemaVersion> {
         let start_time = chrono::Utc::now();
         let mut tx = database_client.as_mut().transaction().await?;
@@ -168,7 +178,11 @@ impl SchemaVersion {
                     .await?;
                 SchemaVersion::InitialSchema
             }
-            SchemaVersion::InitialSchema => unimplemented!(
+            SchemaVersion::InitialSchema => {
+                m0002_acoount_public_key_binding::run(&mut tx, endpoints).await?;
+                SchemaVersion::AccountsPublicKeyBindings
+            }
+            SchemaVersion::AccountsPublicKeyBindings => unimplemented!(
                 "No migration implemented for database schema version {}",
                 self.as_i64()
             ),
