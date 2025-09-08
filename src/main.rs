@@ -516,7 +516,7 @@ impl PreparedStatements {
         tx: &DBTransaction<'_>,
         address: &[u8],
     ) -> Result<(), postgres::Error> {
-        tx.execute(&self.delete_key_bindings, &[&&address[..]])
+        tx.execute(&self.delete_key_bindings, &[&address])
             .await?;
         Ok(())
     }
