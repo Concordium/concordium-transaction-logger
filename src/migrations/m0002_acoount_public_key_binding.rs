@@ -1,88 +1,93 @@
 use anyhow::Context;
 use concordium_rust_sdk::{
     base::transactions::AccountAccessStructure,
-    id::types::VerifyKey,
+    common::Serial,
+    types::AbsoluteBlockHeight,
     v2::{self, BlockIdentifier},
 };
 use futures::TryStreamExt;
 use tokio_postgres::Transaction;
-
-// struct AccountKeyBindings {
-//     key:               AccountAddress,
-//     credential_index:  CredentialIndex,
-//     key_index:         KeyIndex,
-//     is_simple_account: bool,
-// }
-
-// type BindingsInsert = HashMap<AccountAccessStructure, AccountKeyBindings>;
 
 pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow::Result<()> {
     // create the table bindings table
     let query = include_str!("../../resources/m0002-accounts-public-key-bindings.sql");
     tx.batch_execute(query).await?;
 
+    // get the latest block in the db
+    let last_block_height = tx
+        .query_opt(
+            "SELECT summaries.height FROM summaries ORDER BY summaries.id DESC LIMIT 1",
+            &[],
+        )
+        .await?
+        .map(|row| row.try_get::<_, i64>(0))
+        .transpose()?
+        .map(|h| AbsoluteBlockHeight::from(h as u64).into())
+        .unwrap_or(0.into());
+
     // create the client
-    // FIXME: weakpoint, what if there are no endpoints provided, or client cannot
-    // connect, or data from the node is outdated?
-    let endpoint = endpoints.first().context("This is bad")?;
+    let endpoint = endpoints.first().context(
+        "First node endpoint is not available. The indexer/migration file needs access to a node.",
+    )?;
     let mut client = v2::Client::new(endpoint.clone()).await?;
 
-    // get list of accounts
+    // get all account infos
     let accounts = client
-        .get_account_list(BlockIdentifier::LastFinal)
+        .get_account_list(BlockIdentifier::AbsoluteHeight(last_block_height))
         .await?
         .response
-        .try_fold(Vec::new(), |mut cc, address| async move {
-            cc.push(address);
-            Ok(cc)
-        })
+        .try_collect::<Vec<_>>()
         .await?;
+
+    let futures = accounts.into_iter().map(|account| {
+        let mut client = client.clone();
+        async move {
+            client
+                .get_account_info(&account.into(), last_block_height)
+                .await
+        }
+    });
+
+    let account_infos = futures::future::try_join_all(futures)
+        .await?
+        .into_iter()
+        .map(|resp| resp.response);
 
     // prepare statement
     let statement = tx
         .prepare(
             r#"INSERT INTO account_public_key_bindings 
-        (address, public_key, credential_index, key_index, is_simple_account, active)
+        (address, public_key, credential_index, key_index, is_simple_account)
         VALUES
-        ($1, $2, $3, $4, $5, $6)
-        "#,
+        ($1, $2, $3, $4, $5)"#,
         )
         .await?;
 
-    // get and insert account-key bindings info
-    // TODO: make concurent run
-    for account in accounts {
-        let address = account.0.as_ref();
-        let acc_info = client
-            .get_account_info(&account.into(), BlockIdentifier::LastFinal)
-            .await?
-            .response;
-        let access_structure: AccountAccessStructure = (&acc_info).into();
+    // insert account-key bindings info
+    for info in account_infos {
+        let address: &[u8] = info.account_address.as_ref();
+        let access_structure: AccountAccessStructure = (&info).into();
         let is_simple_account = access_structure.num_keys() == 1;
-        for x in access_structure.keys {
-            let cred_index = x.0.index as i32;
-            for y in x.1.keys {
-                let key_index = y.0 .0 as i32;
-                let VerifyKey::Ed25519VerifyKey(key) = y.1;
-                let public_key = key.as_ref();
+        for (cred_index, credential_keys) in access_structure.keys {
+            let credential_index: u8 = cred_index.into();
+            for (key_index, key) in credential_keys.keys {
+                let key_index: u8 = key_index.into();
+                let mut public_key = Vec::new();
+                key.serial(&mut public_key);
                 let _ = tx
                     .execute(
                         &statement,
                         &[
                             &address,
                             &public_key,
-                            &cred_index,
-                            &key_index,
+                            &(credential_index as i32),
+                            &(key_index as i32),
                             &is_simple_account,
-                            &true,
                         ],
                     )
                     .await?;
             }
         }
     }
-
-    // insert keys and accounts
-
     Ok(())
 }
