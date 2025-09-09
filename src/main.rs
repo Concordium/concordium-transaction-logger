@@ -8,7 +8,7 @@ use concordium_rust_sdk::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
         ContractAddress, SpecialTransactionOutcome,
     },
-    v2::{self, FinalizedBlockInfo, Upward},
+    v2::{self, generated::address, FinalizedBlockInfo, Upward},
 };
 use futures::TryStreamExt;
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
@@ -617,7 +617,11 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
-            let affected_addresses = summary.affected_addresses();
+            let affected_addresses = match summary.affected_addresses() {
+                Upward::Known(addresses) => addresses,
+                Upward::Unknown => Vec::new(), // TODO: is this what we want to do for Unknown?
+            };
+
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index
             // is currently expected by "canonical address",
