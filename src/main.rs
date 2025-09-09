@@ -625,6 +625,14 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .get_block_special_events(finalized_block_info.height)
             .await?
             .response
+            .try_filter_map(|upward| {
+                async move {
+                    match upward {
+                        Upward::Known(special_transaction_outcome) => Ok(Some(special_transaction_outcome)),
+                        Upward::Unknown => Ok(None), // TODO: is this what we want to do for Unknown?
+                    }
+                }
+            })
             .try_collect()
             .await?;
 
