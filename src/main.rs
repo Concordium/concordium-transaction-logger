@@ -8,7 +8,7 @@ use concordium_rust_sdk::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
         ContractAddress, SpecialTransactionOutcome,
     },
-    v2::{self, FinalizedBlockInfo},
+    v2::{self, FinalizedBlockInfo, Upward},
 };
 use futures::TryStreamExt;
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
@@ -495,20 +495,24 @@ async fn get_last_block_height(
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
 fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<cis2::Event>)>> {
+
     match bi.contract_update_logs() {
         Some(log_iter) => Some(
-            log_iter
-                .flat_map(|(ca, logs)| {
+        log_iter
+            .filter_map(|upward| match upward {
+                Upward::Known((ca, logs)) => {
                     match logs
                         .iter()
                         .map(cis2::Event::try_from)
-                        .collect::<Result<Vec<cis2::Event>, _>>()
+                        .collect::<Result<Vec<_>, _>>()
                     {
-                        Ok(events) => Some((ca, events)),
+                        Ok(ev) => Some((ca, ev)),
                         Err(_) => None,
                     }
-                })
-                .collect(),
+                }
+                Upward::Unknown => None,  // TODO: is this what we want to do for Unknown?
+            })
+            .collect()
         ),
         None => {
             let init = bi.contract_init()?;
