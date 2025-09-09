@@ -1,4 +1,5 @@
 use anyhow::Context;
+use anyhow::anyhow;
 use clap::AppSettings;
 use concordium_rust_sdk::{
     cis2::{self, TokenAmount, TokenId},
@@ -258,7 +259,7 @@ impl PreparedStatements {
         block_time: Timestamp,
         block_height: AbsoluteBlockHeight,
         ts: &BlockItemSummaryWithCanonicalAddresses,
-    ) -> Result<(), postgres::Error> {
+    ) -> Result<(), DatabaseError> {
         let affected_addresses = &ts.addresses;
         let summary_row = SummaryRow {
             block_hash,
@@ -294,11 +295,12 @@ impl PreparedStatements {
                     tx.query_opt(&self.insert_cti, &values).await?;
                 }
                 Upward::Unknown => {
-                    //if unknown, we don't do anything, just log it
-                    log::info!(
+                    //if unknown, log this as an eror, use DatabaseError::OtherError
+                    log::error!(
                         "Unknown affected contract in transaction summary {:?}",
                         ts.summary
                     );
+                    return Err(DatabaseError::OtherError(anyhow!("Unknown affected contract in transaction summary")));
                 }
             }
         }
@@ -414,8 +416,9 @@ impl PreparedStatements {
         &self,
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
-    ) -> Result<(), postgres::Error> {
-        if let Some(effects) = get_cis2_events(ts) {
+    ) -> Result<(), DatabaseError> {
+        let maybe_events = get_cis2_events(ts)?;
+        if let Some(effects) = maybe_events {
             for (ca, events) in effects {
                 for event in events {
                     match event {
@@ -466,7 +469,7 @@ async fn insert_block(
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
-) -> Result<chrono::Duration, postgres::Error> {
+) -> Result<chrono::Duration, DatabaseError> {
     let start = chrono::Utc::now();
     let db_tx = db.client.as_mut().transaction().await?;
     let prepared = &db.prepared;
@@ -510,34 +513,38 @@ async fn get_last_block_height(
 ///
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<cis2::Event>)>> {
+fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<Vec<(ContractAddress, Vec<cis2::Event>)>>, DatabaseError> {
     match bi.contract_update_logs() {
-        Some(log_iter) => Some(
-            log_iter
-                .filter_map(|upward| match upward {
+       Some(log_iter) => {
+            // Map each log into a Result
+            let events: Result<Vec<_>, _> = log_iter
+                .map(|upward| match upward {
                     Upward::Known((ca, logs)) => {
-                        match logs
+                        let evs: Result<Vec<_>, _> = logs
                             .iter()
                             .map(cis2::Event::try_from)
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            Ok(ev) => Some((ca, ev)),
-                            Err(_) => None,
-                        }
+                            .collect();
+                        evs.map(|ev| (ca, ev))
+                            .map_err(|_| DatabaseError::OtherError(anyhow!("Failed to parse CIS2 event")))
                     }
-                    Upward::Unknown => None, //returning None, keeping it same result as Err, no understantable CIS2 logs
+                    Upward::Unknown => Err(DatabaseError::OtherError(anyhow!("Unknown contract update logs"))),
                 })
-                .collect(),
-        ),
+                .collect();
+
+            events.map(Some)
+        }
         None => {
-            let init = bi.contract_init()?;
-            let cis2 = init
+            let init = bi.contract_init()
+                .ok_or(DatabaseError::OtherError(anyhow!("Missing contract init".to_string())))?;
+
+            let cis2: Vec<_> = init
                 .events
                 .iter()
                 .map(cis2::Event::try_from)
-                .collect::<Result<Vec<cis2::Event>, _>>()
-                .ok()?;
-            Some(vec![(init.address, cis2)])
+                .collect::<Result<_, _>>()
+                .map_err(|_| DatabaseError::OtherError(anyhow!("Failed to convert init CIS2 logs")))?;
+
+            Ok(Some(vec![(init.address, cis2)]))
         }
     }
 }
@@ -631,7 +638,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Ok(None), // we ignore unknown special events
+                        Upward::Unknown => Ok(None), // we ignore unknown special events, treat this as no special ones
                     }
                 }
             })
@@ -644,7 +651,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         for summary in transaction_summaries {
             let affected_addresses = match summary.affected_addresses() {
                 Upward::Known(addresses) => addresses,
-                Upward::Unknown => Vec::new(), // returning empty vec if unknown
+                Upward::Unknown => Vec::new(), // returning empty vec if unknown, the next line will be processing zero length vec anyway, so nothing happens
             };
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
