@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+## [0.15.0] - 2025-09-09
+
+- Added Upward usage in the transaction-logger service and throwing errors for unknown
+
 ## [0.14.0] - 2025-08-07
 
 ### Changed
