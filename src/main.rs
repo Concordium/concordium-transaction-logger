@@ -278,7 +278,7 @@ impl PreparedStatements {
         // insert contracts
         let unwrapped_upwards = match ts.summary.affected_contracts() {
             Upward::Known(contracts) => contracts,
-            Upward::Unknown => Vec::new(), // TODO: is this what we want to do for Unknown?
+            Upward::Unknown => Vec::new(), // if Unknown, pass an empty vec, no contracts to insert
         };
 
         for upward in unwrapped_upwards {
@@ -294,8 +294,8 @@ impl PreparedStatements {
                     tx.query_opt(&self.insert_cti, &values).await?;
                 }
                 Upward::Unknown => {
-                    //TODO: is this what we want to do for Unknown?
-                    println!(
+                    //if unknown, we don't do anything, just log it
+                    log::info!(
                         "Unknown affected contract in transaction summary {:?}",
                         ts.summary
                     );
@@ -525,7 +525,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<ci
                             Err(_) => None,
                         }
                     }
-                    Upward::Unknown => None, // TODO: is this what we want to do for Unknown?
+                    Upward::Unknown => None, //returning None, keeping it same result as Err, no understantable CIS2 logs
                 })
                 .collect(),
         ),
@@ -631,7 +631,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Ok(None), // TODO: is this what we want to do for Unknown?
+                        Upward::Unknown => Ok(None), // we ignore unknown special events
                     }
                 }
             })
@@ -644,7 +644,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         for summary in transaction_summaries {
             let affected_addresses = match summary.affected_addresses() {
                 Upward::Known(addresses) => addresses,
-                Upward::Unknown => Vec::new(), // TODO: is this what we want to do for Unknown?
+                Upward::Unknown => Vec::new(), // returning empty vec if unknown
             };
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
