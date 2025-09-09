@@ -8,7 +8,7 @@ use concordium_rust_sdk::{
         hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
         ContractAddress, SpecialTransactionOutcome,
     },
-    v2::{self, generated::address, FinalizedBlockInfo, Upward},
+    v2::{self, FinalizedBlockInfo, Upward},
 };
 use futures::TryStreamExt;
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
