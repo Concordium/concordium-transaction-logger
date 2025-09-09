@@ -281,13 +281,13 @@ impl PreparedStatements {
             tx.query_opt(&self.insert_ati, &values).await?;
         }
         // insert contracts
-        let unwrapped_upwards = match ts.summary.affected_contracts() {
+        let upward_affected_contracts = match ts.summary.affected_contracts() {
             Upward::Known(contracts) => contracts,
             Upward::Unknown => Vec::new(), // if Unknown, pass an empty vec, no contracts to insert
         };
 
-        for upward in unwrapped_upwards {
-            match upward {
+        for upward_contract_address in upward_affected_contracts {
+            match upward_contract_address {
                 Upward::Known(affected) => {
                     let index = affected.index;
                     let subindex = affected.subindex;
