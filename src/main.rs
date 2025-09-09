@@ -1,5 +1,5 @@
-use anyhow::Context;
 use anyhow::anyhow;
+use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
     cis2::{self, TokenAmount, TokenId},
@@ -24,6 +24,10 @@ use transaction_logger::{
     run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
+
+type ContractEvents = Vec<cis2::Event>;
+type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
+type Cis2Result = Result<Option<ContractEffects>, DatabaseError>;
 
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
@@ -300,7 +304,9 @@ impl PreparedStatements {
                         "Unknown affected contract in transaction summary {:?}",
                         ts.summary
                     );
-                    return Err(DatabaseError::OtherError(anyhow!("Unknown affected contract in transaction summary")));
+                    return Err(DatabaseError::OtherError(anyhow!(
+                        "Unknown affected contract in transaction summary"
+                    )));
                 }
             }
         }
@@ -513,36 +519,40 @@ async fn get_last_block_height(
 ///
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<Vec<(ContractAddress, Vec<cis2::Event>)>>, DatabaseError> {
+fn get_cis2_events(bi: &BlockItemSummary) -> Cis2Result {
     match bi.contract_update_logs() {
-       Some(log_iter) => {
+        Some(log_iter) => {
             // Map each log into a Result
             let events: Result<Vec<_>, _> = log_iter
                 .map(|upward| match upward {
                     Upward::Known((ca, logs)) => {
-                        let evs: Result<Vec<_>, _> = logs
-                            .iter()
-                            .map(cis2::Event::try_from)
-                            .collect();
-                        evs.map(|ev| (ca, ev))
-                            .map_err(|_| DatabaseError::OtherError(anyhow!("Failed to parse CIS2 event")))
+                        let evs: Result<Vec<_>, _> =
+                            logs.iter().map(cis2::Event::try_from).collect();
+                        evs.map(|ev| (ca, ev)).map_err(|_| {
+                            DatabaseError::OtherError(anyhow!("Failed to parse CIS2 event"))
+                        })
                     }
-                    Upward::Unknown => Err(DatabaseError::OtherError(anyhow!("Unknown contract update logs"))),
+                    Upward::Unknown => Err(DatabaseError::OtherError(anyhow!(
+                        "Unknown contract update logs"
+                    ))),
                 })
                 .collect();
 
             events.map(Some)
         }
         None => {
-            let init = bi.contract_init()
-                .ok_or(DatabaseError::OtherError(anyhow!("Missing contract init".to_string())))?;
+            let init = bi.contract_init().ok_or(DatabaseError::OtherError(anyhow!(
+                "Missing contract init".to_string()
+            )))?;
 
             let cis2: Vec<_> = init
                 .events
                 .iter()
                 .map(cis2::Event::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|_| DatabaseError::OtherError(anyhow!("Failed to convert init CIS2 logs")))?;
+                .map_err(|_| {
+                    DatabaseError::OtherError(anyhow!("Failed to convert init CIS2 logs"))
+                })?;
 
             Ok(Some(vec![(init.address, cis2)]))
         }
