@@ -2,8 +2,6 @@
 
 ## Unreleased changes
 
-## [] - 2025-09-09
-
 - Added Upward usage in the transaction-logger service and throwing errors for unknown cases for affected_contracts
 
 ## [0.14.0] - 2025-08-07
