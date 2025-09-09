@@ -276,20 +276,30 @@ impl PreparedStatements {
             tx.query_opt(&self.insert_ati, &values).await?;
         }
         // insert contracts
-        let unwrapped_contracts = match ts.summary.affected_contracts() {
+        let unwrapped_upwards = match ts.summary.affected_contracts() {
             Upward::Known(contracts) => contracts,
             Upward::Unknown => Vec::new(), // TODO: is this what we want to do for Unknown?
         };
-        
-        for affected in unwrapped_contracts {
-            let index = affected.index;
-            let subindex = affected.subindex;
-            let values = [
-                &(index as i64) as &(dyn ToSql + Sync),
-                &(subindex as i64),
-                &id,
-            ];
-            tx.query_opt(&self.insert_cti, &values).await?;
+
+        for upward in unwrapped_upwards {
+            match upward {
+                Upward::Known(affected) => {
+                    let index = affected.index;
+                    let subindex = affected.subindex;
+                    let values = [
+                        &(index as i64) as &(dyn ToSql + Sync),
+                        &(subindex as i64),
+                        &id,
+                    ];
+                    tx.query_opt(&self.insert_cti, &values).await?;
+                }
+                Upward::Unknown => {
+                    //TODO: is this what we want to do for Unknown?
+                    println!("Unknown affected contract in transaction summary {:?}", ts.summary);
+                }
+            }
+            
+            
         }
 
         Ok(())
