@@ -295,11 +295,12 @@ impl PreparedStatements {
                 }
                 Upward::Unknown => {
                     //TODO: is this what we want to do for Unknown?
-                    println!("Unknown affected contract in transaction summary {:?}", ts.summary);
+                    println!(
+                        "Unknown affected contract in transaction summary {:?}",
+                        ts.summary
+                    );
                 }
             }
-            
-            
         }
 
         Ok(())
@@ -510,24 +511,23 @@ async fn get_last_block_height(
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
 fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<cis2::Event>)>> {
-
     match bi.contract_update_logs() {
         Some(log_iter) => Some(
-        log_iter
-            .filter_map(|upward| match upward {
-                Upward::Known((ca, logs)) => {
-                    match logs
-                        .iter()
-                        .map(cis2::Event::try_from)
-                        .collect::<Result<Vec<_>, _>>()
-                    {
-                        Ok(ev) => Some((ca, ev)),
-                        Err(_) => None,
+            log_iter
+                .filter_map(|upward| match upward {
+                    Upward::Known((ca, logs)) => {
+                        match logs
+                            .iter()
+                            .map(cis2::Event::try_from)
+                            .collect::<Result<Vec<_>, _>>()
+                        {
+                            Ok(ev) => Some((ca, ev)),
+                            Err(_) => None,
+                        }
                     }
-                }
-                Upward::Unknown => None,  // TODO: is this what we want to do for Unknown?
-            })
-            .collect()
+                    Upward::Unknown => None, // TODO: is this what we want to do for Unknown?
+                })
+                .collect(),
         ),
         None => {
             let init = bi.contract_init()?;
@@ -628,7 +628,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .try_filter_map(|upward| {
                 async move {
                     match upward {
-                        Upward::Known(special_transaction_outcome) => Ok(Some(special_transaction_outcome)),
+                        Upward::Known(special_transaction_outcome) => {
+                            Ok(Some(special_transaction_outcome))
+                        }
                         Upward::Unknown => Ok(None), // TODO: is this what we want to do for Unknown?
                     }
                 }
