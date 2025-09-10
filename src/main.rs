@@ -19,6 +19,7 @@ use tokio_postgres::{
     Transaction as DBTransaction,
 };
 use tonic::async_trait;
+use tonic::Status;
 use transaction_logger::{
     postgres::{self, DatabaseClient},
     run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
@@ -27,7 +28,6 @@ use transaction_logger::{
 
 type ContractEvents = Vec<cis2::Event>;
 type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
-type Cis2Result = Result<Option<ContractEffects>, DatabaseError>;
 
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
@@ -283,32 +283,33 @@ impl PreparedStatements {
         // insert contracts
         let upward_affected_contracts = match ts.summary.affected_contracts() {
             Upward::Known(contracts) => contracts,
-            Upward::Unknown => Vec::new(), // if Unknown, pass an empty vec, no contracts to insert
+            Upward::Unknown => {
+                return Err(DatabaseError::OtherError(anyhow!(
+                    "Unknown upward encountered for affected contracts"
+                )));
+            } // if Unknown, throw an error
         };
 
         for upward_contract_address in upward_affected_contracts {
-            match upward_contract_address {
-                Upward::Known(affected) => {
-                    let index = affected.index;
-                    let subindex = affected.subindex;
-                    let values = [
-                        &(index as i64) as &(dyn ToSql + Sync),
-                        &(subindex as i64),
-                        &id,
-                    ];
-                    tx.query_opt(&self.insert_cti, &values).await?;
-                }
-                Upward::Unknown => {
-                    //if unknown, log this as an eror, use DatabaseError::OtherError
-                    log::error!(
-                        "Unknown affected contract in transaction summary {:?}",
-                        ts.summary
-                    );
-                    return Err(DatabaseError::OtherError(anyhow!(
-                        "Unknown affected contract in transaction summary"
-                    )));
-                }
-            }
+            let affected = upward_contract_address.known_or_else(|| {
+                log::error!(
+                    "Unknown affected contract in transaction summary {:?}",
+                    ts.summary
+                );
+                DatabaseError::OtherError(anyhow!(
+                    "Unknown affected contract in transaction summary"
+                ))
+            })?; // `?` will propagate the DatabaseError if Unknown
+
+            let index = affected.index;
+            let subindex = affected.subindex;
+            let values = [
+                &(index as i64) as &(dyn ToSql + Sync),
+                &(subindex as i64),
+                &id,
+            ];
+
+            tx.query_opt(&self.insert_cti, &values).await?;
         }
 
         Ok(())
@@ -519,7 +520,7 @@ async fn get_last_block_height(
 ///
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Cis2Result {
+fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, DatabaseError> {
     match bi.contract_update_logs() {
         Some(log_iter) => {
             // Map each log into a Result
@@ -541,17 +542,17 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Cis2Result {
             events.map(Some)
         }
         None => {
-            let init = bi.contract_init().ok_or(DatabaseError::OtherError(anyhow!(
-                "Missing contract init".to_string()
-            )))?;
+            let init = bi
+                .contract_init()
+                .ok_or(DatabaseError::OtherError(anyhow!("")))?;
 
             let cis2: Vec<_> = init
                 .events
                 .iter()
                 .map(cis2::Event::try_from)
                 .collect::<Result<_, _>>()
-                .map_err(|_| {
-                    DatabaseError::OtherError(anyhow!("Failed to convert init CIS2 logs"))
+                .map_err(|e| {
+                    DatabaseError::OtherError(anyhow!("failed to parse CIS2 event: {e}"))
                 })?;
 
             Ok(Some(vec![(init.address, cis2)]))
@@ -648,7 +649,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Ok(None), // we ignore unknown special events, treat this as no special ones
+                        Upward::Unknown => Err(Status::unknown(
+                            "Unknown upward encountered for block special event",
+                        )), // if unknown, throw an error also
                     }
                 }
             })
