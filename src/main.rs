@@ -544,7 +544,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Dat
         None => {
             let init = bi
                 .contract_init()
-                .ok_or(DatabaseError::OtherError(anyhow!("")))?;
+                .ok_or(DatabaseError::OtherError(anyhow!("Contract init failed")))?;
 
             let cis2: Vec<_> = init
                 .events
