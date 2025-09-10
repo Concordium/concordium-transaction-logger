@@ -22,7 +22,7 @@ use tonic::async_trait;
 use tonic::Status;
 use transaction_logger::{
     postgres::{self, DatabaseClient},
-    run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
+    run_service, set_shutdown, BlockInsertSuccess, DatabaseHooks, IndexingError, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
 
@@ -263,7 +263,7 @@ impl PreparedStatements {
         block_time: Timestamp,
         block_height: AbsoluteBlockHeight,
         ts: &BlockItemSummaryWithCanonicalAddresses,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), IndexingError> {
         let affected_addresses = &ts.addresses;
         let summary_row = SummaryRow {
             block_hash,
@@ -284,9 +284,9 @@ impl PreparedStatements {
         let upward_affected_contracts = match ts.summary.affected_contracts() {
             Upward::Known(contracts) => contracts,
             Upward::Unknown => {
-                return Err(DatabaseError::OtherError(anyhow!(
-                    "Unknown upward encountered for affected contracts"
-                )));
+                return Err(IndexingError::Unknown(
+                    "Unknown upward encountered for affected contracts".to_string(),
+                ));
             } // if Unknown, throw an error
         };
 
@@ -296,9 +296,9 @@ impl PreparedStatements {
                     "Unknown affected contract in transaction summary {:?}",
                     ts.summary
                 );
-                DatabaseError::OtherError(anyhow!(
-                    "Unknown affected contract in transaction summary"
-                ))
+                IndexingError::Unknown(
+                    "Unknown affected contract in transaction summary".to_string(),
+                )
             })?; // `?` will propagate the DatabaseError if Unknown
 
             let index = affected.index;
@@ -423,7 +423,7 @@ impl PreparedStatements {
         &self,
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
-    ) -> Result<(), DatabaseError> {
+    ) -> Result<(), IndexingError> {
         let maybe_events = get_cis2_events(ts)?;
         if let Some(effects) = maybe_events {
             for (ca, events) in effects {
@@ -476,7 +476,7 @@ async fn insert_block(
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
-) -> Result<chrono::Duration, DatabaseError> {
+) -> Result<chrono::Duration, IndexingError> {
     let start = chrono::Utc::now();
     let db_tx = db.client.as_mut().transaction().await?;
     let prepared = &db.prepared;
@@ -520,7 +520,7 @@ async fn get_last_block_height(
 ///
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, DatabaseError> {
+fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, IndexingError> {
     match bi.contract_update_logs() {
         Some(log_iter) => {
             // Map each log into a Result
@@ -529,13 +529,13 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Dat
                     Upward::Known((ca, logs)) => {
                         let evs: Result<Vec<_>, _> =
                             logs.iter().map(cis2::Event::try_from).collect();
-                        evs.map(|ev| (ca, ev)).map_err(|_| {
-                            DatabaseError::OtherError(anyhow!("Failed to parse CIS2 event"))
+                        evs.map(|ev| (ca, ev)).map_err(|e| {
+                            IndexingError::ParsingError(format!("Failed to parse CIS2 event :{e}"))
                         })
                     }
-                    Upward::Unknown => Err(DatabaseError::OtherError(anyhow!(
-                        "Unknown contract update logs"
-                    ))),
+                    Upward::Unknown => Err(IndexingError::Unknown(
+                        "Unknown contract update logs".to_string(),
+                    )),
                 })
                 .collect();
 
@@ -544,7 +544,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Dat
         None => {
             let init = bi
                 .contract_init()
-                .ok_or(DatabaseError::OtherError(anyhow!("Contract init failed")))?;
+                .ok_or(IndexingError::OtherError(anyhow!("Contract init failed")))?;
 
             let cis2: Vec<_> = init
                 .events
@@ -552,7 +552,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Dat
                 .map(cis2::Event::try_from)
                 .collect::<Result<_, _>>()
                 .map_err(|e| {
-                    DatabaseError::OtherError(anyhow!("failed to parse CIS2 event: {e}"))
+                    IndexingError::OtherError(anyhow!("failed to parse CIS2 event: {e}"))
                 })?;
 
             Ok(Some(vec![(init.address, cis2)]))
@@ -568,7 +568,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     async fn insert_into_db(
         db_conn: &mut DBConn,
         (bi, item_summaries, special_events): &TransactionLogData,
-    ) -> Result<BlockInsertSuccess, DatabaseError> {
+    ) -> Result<BlockInsertSuccess, IndexingError> {
         let duration = insert_block(
             db_conn,
             bi.block_hash,
@@ -588,7 +588,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
 
     async fn on_request_max_height(
         db: &DatabaseClient,
-    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError> {
+    ) -> Result<Option<AbsoluteBlockHeight>, IndexingError> {
         let height = get_last_block_height(db).await?;
         Ok(height)
     }
@@ -662,10 +662,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
-            let affected_addresses = match summary.affected_addresses() {
-                Upward::Known(addresses) => addresses,
-                Upward::Unknown => Vec::new(), // returning empty vec if unknown, the next line will be processing zero length vec anyway, so nothing happens
-            };
+            let affected_addresses = summary.affected_addresses().known_or_else(|| {
+                Status::unknown("Unknown upward encountered for affected addresses")
+            })?; // if unknown, throw Err Status::unknown
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index
