@@ -5,6 +5,7 @@
 - Handling Upward Known and Unknown usage from main fn get_cis2_events
 - Handling Upward Known and Unknown usage from BlockItemSummary fn affected_contracts
 - Handling Upward Known and Unknown usage from Client fn get_block_special_events
+- Added IndexingError type in lib
 
 ## [0.14.0] - 2025-08-07
 
