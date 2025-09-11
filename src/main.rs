@@ -292,13 +292,8 @@ impl PreparedStatements {
 
         for upward_contract_address in upward_affected_contracts {
             let affected = upward_contract_address.known_or_else(|| {
-                log::error!(
-                    "Unknown upward error on ContractAddress {:?}",
-                    ts.summary
-                );
-                IndexingError::Unknown(
-                    "Unknown upward error on ContractAddress".to_string(),
-                )
+                log::error!("Unknown upward error on ContractAddress {:?}", ts.summary);
+                IndexingError::Unknown("Unknown upward error on ContractAddress".to_string())
             })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
 
             let index = affected.index;
@@ -668,9 +663,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
-            let affected_addresses = summary.affected_addresses().known_or_else(|| {
-                Status::unknown("Unknown upward error on AccountAddress")
-            })?; // if unknown, throw Err Status::unknown
+            let affected_addresses = summary
+                .affected_addresses()
+                .known_or_else(|| Status::unknown("Unknown upward error on AccountAddress"))?; // if unknown, throw Err Status::unknown
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index
