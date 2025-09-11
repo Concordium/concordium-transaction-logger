@@ -524,36 +524,42 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Ind
     match bi.contract_update_logs() {
         Some(log_iter) => {
             // Map each log into a Result
-            let events: Result<Vec<_>, _> = log_iter
-                .map(|upward| match upward {
+            let mut events: ContractEffects = Vec::new();
+            for upward_contract_log in log_iter {
+                match upward_contract_log {
                     Upward::Known((ca, logs)) => {
-                        let evs: Result<Vec<_>, _> =
-                            logs.iter().map(cis2::Event::try_from).collect();
-                        evs.map(|ev| (ca, ev)).map_err(|e| {
-                            IndexingError::ParsingError(format!("Failed to parse CIS2 event :{e}"))
-                        })
-                    }
-                    Upward::Unknown => Err(IndexingError::Unknown(
-                        "Unknown contract update logs".to_string(),
-                    )),
-                })
-                .collect();
+                        let evs: ContractEvents = logs
+                            .iter()
+                            .filter_map(|log| cis2::Event::try_from(log).ok())
+                            .collect(); //if parsing fails because of non cis2, the ok() in filter_map will generate None
 
-            events.map(Some)
+                        events.push((ca, evs));
+                    }
+                    Upward::Unknown => {
+                        // if we get an unknown when retrieving the contract log, we throw an error
+                        return Err(IndexingError::Unknown(
+                            "Unknown error in contract_update_logs".to_string(),
+                        ));
+                    }
+                }
+            }
+            //if no events were parsed due to non cis2 logs, return None wrapped in Ok (Option)
+            if events.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(events))
+            }
         }
         None => {
             let init = bi
                 .contract_init()
-                .ok_or(IndexingError::OtherError(anyhow!("Contract init failed")))?;
+                .ok_or_else(|| IndexingError::OtherError(anyhow!("Contract init failed")))?;
 
-            let cis2: Vec<_> = init
+            let cis2: Vec<cis2::Event> = init
                 .events
                 .iter()
-                .map(cis2::Event::try_from)
-                .collect::<Result<_, _>>()
-                .map_err(|e| {
-                    IndexingError::OtherError(anyhow!("failed to parse CIS2 event: {e}"))
-                })?;
+                .filter_map(|ev| cis2::Event::try_from(ev).ok())
+                .collect();
 
             Ok(Some(vec![(init.address, cis2)]))
         }
@@ -649,8 +655,8 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Err(Status::unknown(
-                            "Unknown upward encountered for block special event",
+                        Upward::Unknown => Err(Status::unknown(                            
+                            "Unknown upward error on block_special_events",
                         )), // if unknown, throw an error also
                     }
                 }

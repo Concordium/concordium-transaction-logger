@@ -208,7 +208,7 @@ pub enum IndexingError {
     #[error("Error happened parsing {0}.")]
     ParsingError(String),
     /// Unknown type encountered error
-    #[error("Please update the rust SDK. Type {0} is unknown.")]
+    #[error("Please update the rust SDK. Error could be due to {0}.")]
     Unknown(String),
     /// Other errors while processing database data.
     #[error("Error happened on database thread {0}.")]
