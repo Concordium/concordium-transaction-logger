@@ -285,7 +285,7 @@ impl PreparedStatements {
             Upward::Known(contracts) => contracts,
             Upward::Unknown => {
                 return Err(IndexingError::Unknown(
-                    "Unknown upward encountered for affected contracts".to_string(),
+                    "Unknown upward error on ContractAddress".to_string(),
                 ));
             } // if Unknown, throw an error
         };
@@ -293,13 +293,13 @@ impl PreparedStatements {
         for upward_contract_address in upward_affected_contracts {
             let affected = upward_contract_address.known_or_else(|| {
                 log::error!(
-                    "Unknown affected contract in transaction summary {:?}",
+                    "Unknown upward error on ContractAddress {:?}",
                     ts.summary
                 );
                 IndexingError::Unknown(
-                    "Unknown affected contract in transaction summary".to_string(),
+                    "Unknown upward error on ContractAddress".to_string(),
                 )
-            })?; // `?` will propagate the DatabaseError if Unknown
+            })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
 
             let index = affected.index;
             let subindex = affected.subindex;
@@ -656,7 +656,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                             Ok(Some(special_transaction_outcome))
                         }
                         Upward::Unknown => Err(Status::unknown(
-                            "Unknown upward error on block_special_events",
+                            "Unknown upward error on SpecialTransactionOutcome",
                         )), // if unknown, throw an error also
                     }
                 }
@@ -669,7 +669,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
             let affected_addresses = summary.affected_addresses().known_or_else(|| {
-                Status::unknown("Unknown upward encountered for affected addresses")
+                Status::unknown("Unknown upward error on AccountAddress")
             })?; // if unknown, throw Err Status::unknown
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
