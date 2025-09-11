@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS account_public_key_bindings(
     credential_index INT NOT NULL,
     key_index INT NOT NULL,
     -- True if there is only one public key associated with a given account.
-    is_simple_account BOOLEAN NOT NULL,
+    is_simple_account BOOLEAN NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_account_public_key_bindings_public_key ON account_public_key_bindings (public_key);
