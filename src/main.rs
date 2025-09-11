@@ -655,7 +655,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Err(Status::unknown(                            
+                        Upward::Unknown => Err(Status::unknown(
                             "Unknown upward error on block_special_events",
                         )), // if unknown, throw an error also
                     }
