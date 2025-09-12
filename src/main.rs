@@ -280,15 +280,12 @@ impl PreparedStatements {
             ];
             tx.query_opt(&self.insert_ati, &values).await?;
         }
+
         // insert contracts
-        let upward_affected_contracts = match ts.summary.affected_contracts() {
-            Upward::Known(contracts) => contracts,
-            Upward::Unknown => {
-                return Err(IndexingError::Unknown(
-                    "Unknown upward error on ContractAddress".to_string(),
-                ));
-            } // if Unknown, throw an error
-        };
+        let upward_affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
+            log::error!("Unknown upward error on ContractAddress {:?}", ts.summary);
+            IndexingError::Unknown("Unknown upward error on ContractAddress".to_string())
+        })?; // if Unknown, throw an error
 
         for upward_contract_address in upward_affected_contracts {
             let affected = upward_contract_address.known_or_else(|| {
