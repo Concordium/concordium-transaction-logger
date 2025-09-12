@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
@@ -283,14 +282,14 @@ impl PreparedStatements {
 
         // insert contracts
         let upward_affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
-            log::error!("Unknown upward error on ContractAddress {:?}", ts.summary);
-            IndexingError::Unknown("Unknown upward error on ContractAddress".to_string())
+            log::error!("Could not determine affected contracts for a BlockItemSummary of unknown type. {:?}", ts.summary);
+            IndexingError::Unknown("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
         })?; // if Unknown, throw an error
 
         for upward_contract_address in upward_affected_contracts {
             let affected = upward_contract_address.known_or_else(|| {
-                log::error!("Unknown upward error on ContractAddress {:?}", ts.summary);
-                IndexingError::Unknown("Unknown upward error on ContractAddress".to_string())
+                log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
+                IndexingError::Unknown("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
             })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
 
             let index = affected.index;
@@ -416,41 +415,40 @@ impl PreparedStatements {
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
     ) -> Result<(), IndexingError> {
-        let maybe_events = get_cis2_events(ts)?;
-        if let Some(effects) = maybe_events {
-            for (ca, events) in effects {
-                for event in events {
-                    match event {
-                        cis2::Event::Transfer { .. } => {
-                            // do nothing, tokens are not created here.
-                        }
-                        cis2::Event::Mint {
-                            ref token_id,
-                            ref amount,
-                            ..
-                        } => {
-                            self.cis2_increase_total_supply(tx, ca, token_id, amount)
-                                .await?;
-                        }
-                        cis2::Event::Burn {
-                            ref token_id,
-                            ref amount,
-                            ..
-                        } => {
-                            self.cis2_decrease_total_supply(tx, ca, token_id, amount)
-                                .await?;
-                        }
-                        cis2::Event::UpdateOperator { .. } => {
-                            // do nothing, updating operators does not change
-                            // token suply
-                        }
-                        cis2::Event::TokenMetadata { .. } => {
-                            // do nothing, updating token metadata does not
-                            // change token supply.
-                        }
-                        cis2::Event::Unknown => {
-                            // do nothing, not a CIS2 event
-                        }
+        let effects = get_cis2_events(ts)?;
+
+        for (ca, events) in effects {
+            for event in events {
+                match event {
+                    cis2::Event::Transfer { .. } => {
+                        // do nothing, tokens are not created here.
+                    }
+                    cis2::Event::Mint {
+                        ref token_id,
+                        ref amount,
+                        ..
+                    } => {
+                        self.cis2_increase_total_supply(tx, ca, token_id, amount)
+                            .await?;
+                    }
+                    cis2::Event::Burn {
+                        ref token_id,
+                        ref amount,
+                        ..
+                    } => {
+                        self.cis2_decrease_total_supply(tx, ca, token_id, amount)
+                            .await?;
+                    }
+                    cis2::Event::UpdateOperator { .. } => {
+                        // do nothing, updating operators does not change
+                        // token suply
+                    }
+                    cis2::Event::TokenMetadata { .. } => {
+                        // do nothing, updating token metadata does not
+                        // change token supply.
+                    }
+                    cis2::Event::Unknown => {
+                        // do nothing, not a CIS2 event
                     }
                 }
             }
@@ -512,7 +510,7 @@ async fn get_last_block_height(
 ///
 /// The return value of [`None`] means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, IndexingError> {
+fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingError> {
     match bi.contract_update_logs() {
         Some(log_iter) => {
             // Map each log into a Result
@@ -528,32 +526,35 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<Option<ContractEffects>, Ind
                         events.push((ca, evs));
                     }
                     Upward::Unknown => {
-                        // if we get an unknown when retrieving the contract log, we throw an error
+                        // if we get an unknown ContractTraceElement in contract invocation summary, we throw an error
                         return Err(IndexingError::Unknown(
-                            "Unknown error in contract_update_logs".to_string(),
+                            "Unknown ContractTraceElement type during contract invocation summary"
+                                .to_string(),
                         ));
                     }
                 }
             }
-            //if no events were parsed due to non cis2 logs, return None wrapped in Ok (Option)
-            if events.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(events))
-            }
+            //if no events were parsed due to non cis2 logs, the vector will be empty
+            //so just return the events vector, empty or not empty.
+            Ok(events)          
         }
         None => {
-            let init = bi
-                .contract_init()
-                .ok_or_else(|| IndexingError::OtherError(anyhow!("Contract init failed")))?;
+            let init = match bi.contract_init() {
+                Some(init) => init,
+                None => return Ok(vec![]),
+            };
 
-            let cis2: Vec<cis2::Event> = init
+            let cis2 = match init
                 .events
                 .iter()
-                .filter_map(|ev| cis2::Event::try_from(ev).ok())
-                .collect();
+                .map(cis2::Event::try_from)
+                .collect::<Result<Vec<cis2::Event>, _>>()
+            {
+                Ok(vec) => vec,
+                Err(_) => return Ok(vec![]),
+            };
 
-            Ok(Some(vec![(init.address, cis2)]))
+            Ok(vec![(init.address, cis2)])
         }
     }
 }
@@ -647,9 +648,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                         Upward::Known(special_transaction_outcome) => {
                             Ok(Some(special_transaction_outcome))
                         }
-                        Upward::Unknown => Err(Status::unknown(
-                            "Unknown upward error on SpecialTransactionOutcome",
-                        )), // if unknown, throw an error also
+                        Upward::Unknown => {
+                            Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
+                        } // if unknown, throw an error also
                     }
                 }
             })
@@ -660,9 +661,9 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
-            let affected_addresses = summary
-                .affected_addresses()
-                .known_or_else(|| Status::unknown("Unknown upward error on AccountAddress"))?; // if unknown, throw Err Status::unknown
+            let affected_addresses = summary.affected_addresses().known_or_else(|| {
+                Status::unknown("Could not determine affected addresses for BlockItem")
+            })?; // if unknown, throw Err Status::unknown
 
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index

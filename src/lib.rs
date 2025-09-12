@@ -204,15 +204,9 @@ pub enum IndexingError {
     /// Database error.
     #[error("Error using the database {0}.")]
     PostgresError(#[from] postgres::Error),
-    /// Parsing errors.
-    #[error("Error happened parsing {0}.")]
-    ParsingError(String),
     /// Unknown type encountered error
-    #[error("Please update the rust SDK. Error could be due to {0}.")]
+    #[error("Please update the rust SDK. Reason for this could be due to {0}.")]
     Unknown(String),
-    /// Other errors while processing database data.
-    #[error("Error happened on database thread {0}.")]
-    OtherError(#[from] anyhow::Error),
 }
 
 /// Defines a set of necessary callbacks used while interacting with a node.

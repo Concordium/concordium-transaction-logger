@@ -2,10 +2,7 @@
 
 ## Unreleased changes
 
-- Handling Upward Known and Unknown usage from main fn get_cis2_events
-- Handling Upward Known and Unknown usage from BlockItemSummary fn affected_contracts
-- Handling Upward Known and Unknown usage from Client fn get_block_special_events
-- Added IndexingError type in lib
+- Update the Rust SDK for better forwards compatibility with future node versions and revised error handling or reporting for unknown transaction and event types. New type `IndexingError` created in lib. Error handling in fn `get_cis2_events`, `insert_transaction` and `on_finalized_block`.
 
 ## [0.14.0] - 2025-08-07
 
