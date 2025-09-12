@@ -536,7 +536,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingErr
             }
             //if no events were parsed due to non cis2 logs, the vector will be empty
             //so just return the events vector, empty or not empty.
-            Ok(events)          
+            Ok(events)
         }
         None => {
             let init = match bi.contract_init() {
