@@ -18,13 +18,13 @@ use tokio_postgres::{
     Transaction as DBTransaction,
 };
 use tonic::async_trait;
-use transaction_logger::{
+use wallet_proxy_indexer::{
     postgres::{self, DatabaseClient},
     run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
 
-type DBConn = transaction_logger::DBConn<PreparedStatements>;
+type DBConn = wallet_proxy_indexer::DBConn<PreparedStatements>;
 
 const MAX_CONNECT_ATTEMPTS: u32 = 6;
 
