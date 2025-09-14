@@ -1,5 +1,4 @@
 use anyhow::Context;
-use clap::AppSettings;
 use concordium_rust_sdk::{
     cis2::{self, TokenAmount, TokenId},
     common::{types::Timestamp, SerdeSerialize},
@@ -10,8 +9,9 @@ use concordium_rust_sdk::{
     },
     v2::{self, FinalizedBlockInfo},
 };
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio_postgres::{
     types::{Json, ToSql},

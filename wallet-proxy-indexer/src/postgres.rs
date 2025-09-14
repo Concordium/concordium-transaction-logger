@@ -4,7 +4,7 @@ use concordium_rust_sdk::{
     id::types::AccountAddress,
     types::{AbsoluteBlockHeight, BlockItemSummary, ContractAddress, SpecialTransactionOutcome},
 };
-use futures::StreamExt;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
 use tokio::task::{JoinError, JoinHandle};
@@ -311,7 +311,7 @@ impl DatabaseClient {
         acc: &'a AccountAddress,
         limit: i64,
         order: QueryOrder,
-    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+    ) -> Result<impl futures_util::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         let (statement, start) = match order {
             QueryOrder::Ascending { start } => (
                 &self.statements.query_account_statement_asc,
@@ -342,7 +342,7 @@ impl DatabaseClient {
         c: ContractAddress,
         limit: i64,
         order: QueryOrder,
-    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+    ) -> Result<impl futures_util::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         let (statement, start) = match order {
             QueryOrder::Ascending { start } => (
                 &self.statements.query_contract_statement_asc,
@@ -366,7 +366,7 @@ impl DatabaseClient {
         &self,
         acc: &AccountAddress,
         start: Option<i64>,
-    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+    ) -> Result<impl futures_util::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         self.query_account(acc, i64::MAX, QueryOrder::Ascending { start })
             .await
     }
@@ -377,7 +377,7 @@ impl DatabaseClient {
         &self,
         addr: ContractAddress,
         start: Option<i64>,
-    ) -> Result<impl futures::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
+    ) -> Result<impl futures_util::stream::Stream<Item = DatabaseRow>, tokio_postgres::Error> {
         self.query_contract(addr, i64::MAX, QueryOrder::Ascending { start })
             .await
     }

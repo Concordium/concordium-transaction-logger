@@ -226,7 +226,7 @@ pub async fn set_shutdown(shutdown_sender: tokio::sync::watch::Sender<()>) -> an
         let terminate = Box::pin(terminate_stream.recv());
         let interrupt = Box::pin(interrupt_stream.recv());
 
-        futures::future::select(terminate, interrupt).await;
+        futures_util::future::select(terminate, interrupt).await;
     }
     #[cfg(windows)]
     {
