@@ -1,15 +1,3 @@
-.*
-!*ignore
-*~
-*.swp
-*.out
-*.dll
-*.exe
-*.a
-*.pdf
-*.csv
-*.bin
-*.json
-
 target
-/.dir-locals.el
+.idea
+.vscode
