@@ -521,7 +521,8 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingErr
                         let evs: Option<ContractEvents> = logs
                             .iter()
                             .map(cis2::Event::try_from)
-                            .collect::<Result<Vec<cis2::Event>, _>>().ok();
+                            .collect::<Result<Vec<cis2::Event>, _>>()
+                            .ok();
 
                         if let Some(evs) = evs {
                             events.push((ca, evs));
