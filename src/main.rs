@@ -283,13 +283,13 @@ impl PreparedStatements {
         // insert contracts
         let upward_affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
             log::error!("Could not determine affected contracts for a BlockItemSummary of unknown type. {:?}", ts.summary);
-            IndexingError::Unknown("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
+            IndexingError::UnknownData("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
         })?; // if Unknown, throw an error
 
         for upward_contract_address in upward_affected_contracts {
             let affected = upward_contract_address.known_or_else(|| {
                 log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
-                IndexingError::Unknown("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
+                IndexingError::UnknownData("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
             })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
 
             let index = affected.index;
@@ -508,26 +508,32 @@ async fn get_last_block_height(
 /// parsing then the logs for that section of execution are ignored, since it
 /// indicates an error in the contract.
 ///
-/// The return value of [`None`] means there are no understandable CIS2 logs
+/// The return value of empty vec means there are no understandable CIS2 logs
 /// produced.
 fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingError> {
     match bi.contract_update_logs() {
         Some(log_iter) => {
             // Map each log into a Result
             let mut events: ContractEffects = Vec::new();
-            for upward_contract_log in log_iter {
-                match upward_contract_log {
+            for contract_log in log_iter {
+                match contract_log {
                     Upward::Known((ca, logs)) => {
-                        let evs: ContractEvents = logs
-                            .iter()
-                            .filter_map(|log| cis2::Event::try_from(log).ok())
-                            .collect(); //if parsing fails because of non cis2, the ok() in filter_map will generate None
 
-                        events.push((ca, evs));
+                        let evs: Option<ContractEvents> = match logs
+                            .iter().map(cis2::Event::try_from)
+                            .collect::<Result<Vec<cis2::Event>, _>>() 
+                        {
+                            Ok(events) => Some(events),
+                            Err(_) => None,
+                        }; 
+                        
+                        if let Some(evs) = evs {
+                            events.push((ca, evs));
+                        }
                     }
                     Upward::Unknown => {
                         // if we get an unknown ContractTraceElement in contract invocation summary, we throw an error
-                        return Err(IndexingError::Unknown(
+                        return Err(IndexingError::UnknownData(
                             "Unknown ContractTraceElement type during contract invocation summary"
                                 .to_string(),
                         ));

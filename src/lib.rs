@@ -204,9 +204,9 @@ pub enum IndexingError {
     /// Database error.
     #[error("Error using the database {0}.")]
     PostgresError(#[from] postgres::Error),
-    /// Unknown type encountered error
+    /// Unknown Data type encountered error
     #[error("Please update the rust SDK. Reason for this could be due to {0}.")]
-    Unknown(String),
+    UnknownData(String),
 }
 
 /// Defines a set of necessary callbacks used while interacting with a node.

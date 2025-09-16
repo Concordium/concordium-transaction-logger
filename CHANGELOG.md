@@ -2,7 +2,7 @@
 
 ## Unreleased changes
 
-- Update the Rust SDK for better forwards compatibility with future node versions and revised error handling or reporting for unknown transaction and event types. New type `IndexingError` created in lib. Error handling in fn `get_cis2_events`, `insert_transaction` and `on_finalized_block`.
+- Update the Rust SDK for better forwards compatibility with future node versions and revised error handling or reporting for unknown transaction and event types. If within the database hook callback has unknown data variants in the block processing, the process would complain and cease, raising `IndexingError` to alert.
 
 ## [0.14.0] - 2025-08-07
 
