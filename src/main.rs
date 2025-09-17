@@ -516,25 +516,24 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingErr
             // Map each log into a Result
             let mut events: ContractEffects = Vec::new();
             for contract_log in log_iter {
-                match contract_log {
-                    Upward::Known((ca, logs)) => {
-                        let evs: Option<ContractEvents> = logs
-                            .iter()
-                            .map(cis2::Event::try_from)
-                            .collect::<Result<Vec<cis2::Event>, _>>()
-                            .ok();
+                let (ca, logs) = contract_log.known_or_else(|| {
+                    log::error!(
+                        "Could not determine contract log, unknown type. {:?}",
+                        contract_log
+                    );
+                    IndexingError::UnknownData(
+                        "Could not determine contract log, unknown type.".to_string(),
+                    )
+                })?;
 
-                        if let Some(evs) = evs {
-                            events.push((ca, evs));
-                        }
-                    }
-                    Upward::Unknown => {
-                        // if we get an unknown ContractTraceElement in contract invocation summary, we throw an error
-                        return Err(IndexingError::UnknownData(
-                            "Unknown ContractTraceElement type during contract invocation summary"
-                                .to_string(),
-                        ));
-                    }
+                let evs = logs
+                    .iter()
+                    .map(cis2::Event::try_from)
+                    .collect::<Result<Vec<cis2::Event>, _>>()
+                    .ok();
+
+                if let Some(evs) = evs {
+                    events.push((ca, evs));
                 }
             }
             //if no events were parsed due to non cis2 logs, the vector will be empty
