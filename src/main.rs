@@ -644,16 +644,14 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .get_block_special_events(finalized_block_info.height)
             .await?
             .response
-            .try_filter_map(|upward| {
-                async move {
-                    match upward {
-                        Upward::Known(special_transaction_outcome) => {
-                            Ok(Some(special_transaction_outcome))
-                        }
-                        Upward::Unknown => {
-                            Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
-                        } // if unknown, throw an error also
+            .try_map(|upward| {                
+                match upward {
+                    Upward::Known(special_transaction_outcome) => {
+                        Ok(Some(special_transaction_outcome))
                     }
+                    Upward::Unknown => {
+                        Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
+                    } // if unknown, throw an error also
                 }
             })
             .try_collect()
