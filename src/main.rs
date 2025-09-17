@@ -644,7 +644,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .get_block_special_events(finalized_block_info.height)
             .await?
             .response
-            .try_map(|upward| {                
+            .try_map(|upward| {
                 match upward {
                     Upward::Known(special_transaction_outcome) => {
                         Ok(Some(special_transaction_outcome))
