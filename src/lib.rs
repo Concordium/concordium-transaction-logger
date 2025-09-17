@@ -300,6 +300,11 @@ where
                     );
                 }
                 Err(e) => {
+                    if let IndexingError::UnknownData(reasons) = &e {
+                        log::error!("Encountered unknown data variant. Please update the rust SDK. Reason(s): {}", reasons);
+                        return Err(anyhow::anyhow!("Encountered unknown data variant. Please update the rust SDK. Reason(s): {}", reasons));
+                    }
+
                     successive_errors += 1;
                     // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
                     // The reason for the min is that we bound the time between reconnects.

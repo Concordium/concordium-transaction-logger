@@ -640,6 +640,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                 .try_collect()
                 .await?
         };
+
         let special_events = node
             .get_block_special_events(finalized_block_info.height)
             .await?
