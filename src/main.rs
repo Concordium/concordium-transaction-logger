@@ -290,7 +290,7 @@ impl PreparedStatements {
             let affected = contract_address.known_or_else(|| {
                 log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
                 IndexingError::UnknownData("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
-            })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
+            })?; // encountered unknown contract_address, throw an error, this will stop the insert into db process and alert the user to update the rust SDK
 
             let index = affected.index;
             let subindex = affected.subindex;
