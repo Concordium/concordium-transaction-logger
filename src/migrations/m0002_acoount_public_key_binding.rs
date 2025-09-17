@@ -10,6 +10,8 @@ use tokio::time::Instant;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Transaction;
 
+/// Represents one pending row to be inserted
+type PendingRow = (Vec<u8>, Vec<u8>, i32, i32, bool);
 
 pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow::Result<()> {
     println!("Starting migration now for public keys");
@@ -52,7 +54,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     let accounts_length = accounts.len();
     let batch_size = 1000;
     let concurrent_query_limit = 50usize;
-    let mut pending_rows: Vec<(Vec<u8>, Vec<u8>, i32, i32, bool)> = Vec::with_capacity(batch_size);
+    let mut pending_rows: Vec<PendingRow> = Vec::with_capacity(batch_size);
     let mut rows_inserted_count = 0;
     println!(
         "Details -- accounts to fetch and insert: {}, batch size: {}",
@@ -132,7 +134,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
 /// helper function to bulk insert the pending rows to the DB
 pub async fn bulk_insert_pending_rows(
     tx: &tokio_postgres::Transaction<'_>,
-    rows: &[(Vec<u8>, Vec<u8>, i32, i32, bool)],
+    rows: &[PendingRow],
 ) -> Result<u64, tokio_postgres::Error> {
     if rows.is_empty() {
         return Ok(0);
