@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+Database schema version: 2
+
+- added database migration to create `account_public_key_bindings` and inserts data for all account public key mappings into this table
+
 ## [0.14.0] - 2025-08-07
 
 ### Changed
