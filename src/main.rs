@@ -281,13 +281,13 @@ impl PreparedStatements {
         }
 
         // insert contracts
-        let upward_affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
+        let affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
             log::error!("Could not determine affected contracts for a BlockItemSummary of unknown type. {:?}", ts.summary);
             IndexingError::UnknownData("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
         })?; // if Unknown, throw an error
 
-        for upward_contract_address in upward_affected_contracts {
-            let affected = upward_contract_address.known_or_else(|| {
+        for contract_address in affected_contracts {
+            let affected = contract_address.known_or_else(|| {
                 log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
                 IndexingError::UnknownData("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
             })?; // encountered unknown contract_address, throw an error to prevent transaction insertion
