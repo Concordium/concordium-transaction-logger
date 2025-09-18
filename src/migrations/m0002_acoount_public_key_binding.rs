@@ -17,8 +17,6 @@ type PendingPublicKeyBindingInsertionRow = (Vec<u8>, Vec<u8>, i32, i32, bool);
 const CONCURRENT_QUERY_LIMIT: usize = 50;
 
 pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow::Result<()> {
-    println!("Starting migration now for public keys");
-
     // Get time of the start of the migration - so that we can measure how long it takes
     let start = Instant::now();
 
@@ -58,7 +56,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     let batch_size = 1000;
     let mut pending_rows: Vec<PendingPublicKeyBindingInsertionRow> = Vec::with_capacity(batch_size);
     let mut rows_inserted_count = 0;
-    println!(
+    log::info!(
         "Details -- accounts to fetch and insert: {}, batch size: {}",
         accounts_length, batch_size
     );
@@ -75,9 +73,9 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
                     .await
                     .map(|resp| resp.response);
 
-                println!(
+                log::info!(
                     "account info query with node: {} out of: {}, account: {:?}",
-                    query_count, accounts_length, &account.0
+                    query_count, accounts_length, &account.to_string()
                 );
 
                 account_info
@@ -115,7 +113,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
         if pending_rows.len() >= batch_size {
             bulk_insert_pending_rows(tx, &pending_rows).await?;
             rows_inserted_count += pending_rows.len();
-            println!("Bulk insert done now for account index: {} out of: {} accounts. Rows inserted so far: {}", index, accounts_length, rows_inserted_count);
+            log::info!("Bulk insert done now for account index: {} out of: {} accounts. Rows inserted so far: {}", index, accounts_length, rows_inserted_count);
             pending_rows.clear();
         }
     }
@@ -123,11 +121,11 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     // Flush any remaining pending rows to the DB (occurs when less than the batch limit was reached at the end)
     if !pending_rows.is_empty() {
         bulk_insert_pending_rows(tx, &pending_rows).await?;
-        println!("Finalized last bulk insert for {} rows", pending_rows.len());
+        log::info!("Finalized last bulk insert for {} rows", pending_rows.len());
         pending_rows.clear();
     }
 
-    println!("elasped time was: {:?}", start.elapsed());
+    log::info!("elasped time was: {:?}", start.elapsed());
     Ok(())
 }
 
