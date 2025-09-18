@@ -64,7 +64,6 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     // Create a buffer for querying the account info's - `concurrent_query_limit` defines how many are done in parallel with the node
     let account_infos: Vec<AccountInfo> = stream::iter(accounts.into_iter())
         .map(|account| {
-
             let mut client = client.clone();
             query_count += 1;
 
