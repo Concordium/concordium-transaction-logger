@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+- Update the Rust SDK for better forwards compatibility with future node versions and revised error handling or reporting for unknown transaction and event types. If within the database hook callback has unknown data variants in the block processing, the process would complain and cease, raising `IndexingError` to alert.
+
 ## [0.14.0] - 2025-08-07
 
 ### Changed
