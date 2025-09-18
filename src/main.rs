@@ -10,7 +10,7 @@ use concordium_rust_sdk::{
     },
     v2::{self, FinalizedBlockInfo, Upward},
 };
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
 use structopt::StructOpt;
 use tokio_postgres::{
@@ -645,17 +645,13 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .get_block_special_events(finalized_block_info.height)
             .await?
             .response
-            .try_filter_map(|upward| {
-                async move {
-                    match upward {
-                        Upward::Known(special_transaction_outcome) => {
-                            Ok(Some(special_transaction_outcome))
-                        }
-                        Upward::Unknown => {
-                            Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
-                        } // if unknown, throw an error also
+            .map(|upward_res| {
+                upward_res.and_then(|upward| match upward {
+                    Upward::Known(special_transaction_outcome) => Ok(special_transaction_outcome),
+                    Upward::Unknown => {
+                        Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
                     }
-                }
+                })
             })
             .try_collect()
             .await?;
