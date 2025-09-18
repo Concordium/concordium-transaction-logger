@@ -2,10 +2,8 @@
 
 ## Unreleased changes
 
-Database schema version: 2
-
-- added database migration to create `account_public_key_bindings` and inserts data for all account public key mappings into this table
-
+- Database schema version: 2.
+- Added database migration to create `account_public_key_bindings` and inserts data for all account public key mappings into this table
 - Added `PublicKeyBindingInfo` type that represents public key info of accounts access structure.
 - Added `PublicKeyBindingInfo` into `TransactionLogData`.
 - Added `insert_key_bindings` and `delete_key_bindings` feilds into `PreparedStatements`.
