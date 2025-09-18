@@ -12,7 +12,7 @@ use concordium_rust_sdk::{
     },
     v2::{self, BlockIdentifier, FinalizedBlockInfo, Upward},
 };
-use futures::{StreamExt, {StreamExt, TryStreamExt}};
+use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
@@ -534,34 +534,6 @@ impl PreparedStatements {
         Ok(())
     }
 
-    async fn update_key_bindings(
-        &self,
-        tx: &DBTransaction<'_>,
-        bindings: &AccountPublicKeyBindings,
-    ) -> Result<(), postgres::Error> {
-        for (account, bindings) in bindings {
-            let address: &[u8; 32] = account.as_ref();
-            self.delete_key_bindings(tx, address).await?;
-            for binding in bindings {
-                let credential_index = binding.credential_index as i32;
-                let key_index = binding.key_index as i32;
-                tx.execute(
-                    &self.insert_key_bindings,
-                    &[
-                        &&address[..],
-                        &binding.public_key,
-                        &credential_index,
-                        &key_index,
-                        &binding.is_simple_account,
-                    ],
-                )
-                .await?;
-            }
-        }
-        log::info!("inserted {} bindings into DB", bindings.len());
-        Ok(())
-    }
-
     async fn delete_key_bindings(
         &self,
         tx: &DBTransaction<'_>,
@@ -714,14 +686,19 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
 
 fn key_update_account(bi: &BlockItemSummary) -> Option<AccountAddress> {
     match &bi.details {
-        BlockItemSummaryDetails::AccountCreation(details) => {
-            log::info!("account creation transaction recieved");
-            Some(details.address)},
-        BlockItemSummaryDetails::AccountTransaction(details) => match &details.effects {
-            AccountTransactionEffects::CredentialKeysUpdated { .. }
-            | AccountTransactionEffects::CredentialsUpdated { .. } => {
-                log::info!("account key update transaction recieved");
-                Some(details.sender)},
+        Upward::Known(details) => match details {
+            BlockItemSummaryDetails::AccountCreation(ac) => {
+                log::info!("account creation transaction received");
+                Some(ac.address)
+            }
+            BlockItemSummaryDetails::AccountTransaction(at) => match &at.effects {
+                Upward::Known(AccountTransactionEffects::CredentialKeysUpdated { .. })
+                | Upward::Known(AccountTransactionEffects::CredentialsUpdated { .. }) => {
+                    log::info!("account key update transaction received");
+                    Some(at.sender)
+                }
+                _ => None,
+            },
             _ => None,
         },
         _ => None,
@@ -880,7 +857,10 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             }
             with_addresses.push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
         }
-        log::info!("total accounts with keys to be updated {}", key_update_addresses.len());
+        log::info!(
+            "total accounts with keys to be updated {}",
+            key_update_addresses.len()
+        );
         let bindings = parse_key_updates(node, key_update_addresses, binfo.block_height).await?;
         Ok((binfo, with_addresses, special_events, bindings))
     }
