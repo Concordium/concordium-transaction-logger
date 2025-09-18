@@ -9,7 +9,7 @@ use concordium_rust_sdk::{
     },
     v2::{self, FinalizedBlockInfo},
 };
-use futures_util::TryStreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use std::{collections::HashSet, convert::TryFrom, hash::Hash};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
@@ -18,9 +18,10 @@ use tokio_postgres::{
     Transaction as DBTransaction,
 };
 use tonic::async_trait;
+use tonic::Status;
 use wallet_proxy_indexer::{
     postgres::{self, DatabaseClient},
-    run_service, set_shutdown, BlockInsertSuccess, DatabaseError, DatabaseHooks, NodeError,
+    run_service, set_shutdown, BlockInsertSuccess, DatabaseHooks, IndexingError, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
 
@@ -258,7 +259,7 @@ impl PreparedStatements {
         block_time: Timestamp,
         block_height: AbsoluteBlockHeight,
         ts: &BlockItemSummaryWithCanonicalAddresses,
-    ) -> Result<(), postgres::Error> {
+    ) -> Result<(), IndexingError> {
         let affected_addresses = &ts.addresses;
         let summary_row = SummaryRow {
             block_hash,
@@ -275,8 +276,19 @@ impl PreparedStatements {
             ];
             tx.query_opt(&self.insert_ati, &values).await?;
         }
+
         // insert contracts
-        for affected in ts.summary.affected_contracts() {
+        let affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
+            log::error!("Could not determine affected contracts for a BlockItemSummary of unknown type. {:?}", ts.summary);
+            IndexingError::UnknownData("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
+        })?; // if Unknown, throw an error
+
+        for contract_address in affected_contracts {
+            let affected = contract_address.known_or_else(|| {
+                log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
+                IndexingError::UnknownData("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
+            })?; // encountered unknown contract_address, throw an error, this will stop the insert into db process and alert the user to update the rust SDK
+
             let index = affected.index;
             let subindex = affected.subindex;
             let values = [
@@ -284,6 +296,7 @@ impl PreparedStatements {
                 &(subindex as i64),
                 &id,
             ];
+
             tx.query_opt(&self.insert_cti, &values).await?;
         }
 
@@ -398,41 +411,41 @@ impl PreparedStatements {
         &self,
         tx: &DBTransaction<'_>,
         ts: &BlockItemSummary,
-    ) -> Result<(), postgres::Error> {
-        if let Some(effects) = get_cis2_events(ts) {
-            for (ca, events) in effects {
-                for event in events {
-                    match event {
-                        cis2::Event::Transfer { .. } => {
-                            // do nothing, tokens are not created here.
-                        }
-                        cis2::Event::Mint {
-                            ref token_id,
-                            ref amount,
-                            ..
-                        } => {
-                            self.cis2_increase_total_supply(tx, ca, token_id, amount)
-                                .await?;
-                        }
-                        cis2::Event::Burn {
-                            ref token_id,
-                            ref amount,
-                            ..
-                        } => {
-                            self.cis2_decrease_total_supply(tx, ca, token_id, amount)
-                                .await?;
-                        }
-                        cis2::Event::UpdateOperator { .. } => {
-                            // do nothing, updating operators does not change
-                            // token suply
-                        }
-                        cis2::Event::TokenMetadata { .. } => {
-                            // do nothing, updating token metadata does not
-                            // change token supply.
-                        }
-                        cis2::Event::Unknown => {
-                            // do nothing, not a CIS2 event
-                        }
+    ) -> Result<(), IndexingError> {
+        let effects = get_cis2_events(ts)?;
+
+        for (ca, events) in effects {
+            for event in events {
+                match event {
+                    cis2::Event::Transfer { .. } => {
+                        // do nothing, tokens are not created here.
+                    }
+                    cis2::Event::Mint {
+                        ref token_id,
+                        ref amount,
+                        ..
+                    } => {
+                        self.cis2_increase_total_supply(tx, ca, token_id, amount)
+                            .await?;
+                    }
+                    cis2::Event::Burn {
+                        ref token_id,
+                        ref amount,
+                        ..
+                    } => {
+                        self.cis2_decrease_total_supply(tx, ca, token_id, amount)
+                            .await?;
+                    }
+                    cis2::Event::UpdateOperator { .. } => {
+                        // do nothing, updating operators does not change
+                        // token suply
+                    }
+                    cis2::Event::TokenMetadata { .. } => {
+                        // do nothing, updating token metadata does not
+                        // change token supply.
+                    }
+                    cis2::Event::Unknown => {
+                        // do nothing, not a CIS2 event
                     }
                 }
             }
@@ -450,7 +463,7 @@ async fn insert_block(
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
-) -> Result<chrono::Duration, postgres::Error> {
+) -> Result<chrono::Duration, IndexingError> {
     let start = chrono::Utc::now();
     let db_tx = db.client.as_mut().transaction().await?;
     let prepared = &db.prepared;
@@ -486,39 +499,64 @@ async fn get_last_block_height(
     }
 }
 
+type ContractEvents = Vec<cis2::Event>;
+type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
+
 /// Attempt to extract CIS2 events from the block item.
 /// If the transaction is a smart contract init or update transaction then
 /// attempt to parse the events as CIS2 events. If any of the events fail
 /// parsing then the logs for that section of execution are ignored, since it
 /// indicates an error in the contract.
 ///
-/// The return value of [`None`] means there are no understandable CIS2 logs
+/// The return value of empty vec means there are no understandable CIS2 logs
 /// produced.
-fn get_cis2_events(bi: &BlockItemSummary) -> Option<Vec<(ContractAddress, Vec<cis2::Event>)>> {
+fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingError> {
     match bi.contract_update_logs() {
-        Some(log_iter) => Some(
-            log_iter
-                .flat_map(|(ca, logs)| {
-                    match logs
-                        .iter()
-                        .map(cis2::Event::try_from)
-                        .collect::<Result<Vec<cis2::Event>, _>>()
-                    {
-                        Ok(events) => Some((ca, events)),
-                        Err(_) => None,
-                    }
-                })
-                .collect(),
-        ),
+        Some(log_iter) => {
+            // Map each log into a Result
+            let mut events: ContractEffects = Vec::new();
+            for contract_log in log_iter {
+                let (ca, logs) = contract_log.known_or_else(|| {
+                    log::error!(
+                        "Could not determine contract log, unknown type. {:?}",
+                        contract_log
+                    );
+                    IndexingError::UnknownData(
+                        "Could not determine contract log, unknown type.".to_string(),
+                    )
+                })?;
+
+                let evs = logs
+                    .iter()
+                    .map(cis2::Event::try_from)
+                    .collect::<Result<Vec<cis2::Event>, _>>()
+                    .ok();
+
+                if let Some(evs) = evs {
+                    events.push((ca, evs));
+                }
+            }
+            //if no events were parsed due to non cis2 logs, the vector will be empty
+            //so just return the events vector, empty or not empty.
+            Ok(events)
+        }
         None => {
-            let init = bi.contract_init()?;
-            let cis2 = init
+            let init = match bi.contract_init() {
+                Some(init) => init,
+                None => return Ok(vec![]),
+            };
+
+            let cis2 = match init
                 .events
                 .iter()
                 .map(cis2::Event::try_from)
                 .collect::<Result<Vec<cis2::Event>, _>>()
-                .ok()?;
-            Some(vec![(init.address, cis2)])
+            {
+                Ok(vec) => vec,
+                Err(_) => return Ok(vec![]),
+            };
+
+            Ok(vec![(init.address, cis2)])
         }
     }
 }
@@ -531,7 +569,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     async fn insert_into_db(
         db_conn: &mut DBConn,
         (bi, item_summaries, special_events): &TransactionLogData,
-    ) -> Result<BlockInsertSuccess, DatabaseError> {
+    ) -> Result<BlockInsertSuccess, IndexingError> {
         let duration = insert_block(
             db_conn,
             bi.block_hash,
@@ -551,7 +589,7 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
 
     async fn on_request_max_height(
         db: &DatabaseClient,
-    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError> {
+    ) -> Result<Option<AbsoluteBlockHeight>, IndexingError> {
         let height = get_last_block_height(db).await?;
         Ok(height)
     }
@@ -602,10 +640,16 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                 .try_collect()
                 .await?
         };
+
         let special_events = node
             .get_block_special_events(finalized_block_info.height)
             .await?
             .response
+            .map(|upward_res| {
+                upward_res.and_then(|upward| {
+                    upward.known_or(Status::unknown("Unknown SpecialTransactionOutcome type"))
+                })
+            })
             .try_collect()
             .await?;
 
@@ -613,7 +657,10 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         for summary in transaction_summaries {
-            let affected_addresses = summary.affected_addresses();
+            let affected_addresses = summary.affected_addresses().known_or_else(|| {
+                Status::unknown("Could not determine affected addresses for BlockItem")
+            })?; // if unknown, throw Err Status::unknown
+
             let mut addresses = Vec::with_capacity(affected_addresses.len());
             // resolve canonical addresses. This part is only needed because the index
             // is currently expected by "canonical address",
