@@ -6,8 +6,9 @@ use concordium_rust_sdk::{
     common::{types::Timestamp, SerdeSerialize, Serial},
     id::types::AccountAddress,
     types::{
-        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, AccountInfo, BlockItemSummary,
-        ContractAddress, SpecialTransactionOutcome,
+        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, AccountInfo,
+        AccountTransactionEffects, BlockItemSummary, BlockItemSummaryDetails, ContractAddress,
+        SpecialTransactionOutcome,
     },
     v2::{self, BlockIdentifier, FinalizedBlockInfo},
 };
@@ -155,13 +156,19 @@ struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) addresses: Vec<AccountAddress>,
 }
 
+/// Data to be saved in a row of public key to account address bindings table.
 struct PublicKeyBindingInfo {
-    pub(crate) public_key: Vec<u8>,
-    pub(crate) credential_index: u8,
-    pub(crate) key_index: u8,
-    pub(crate) is_simple_account: bool,
+    /// Public key related to an account address.
+    public_key: Vec<u8>,
+    /// Index of a credential with an access to the account.
+    credential_index: u8,
+    /// Index of a key in a credential.
+    key_index: u8,
+    /// Flag that indicates if there is only one account address associated with a given public key.
+    is_simple_account: bool,
 }
 
+/// List of account address and thier public keys.
 type AccountPublicKeyBindings = HashMap<AccountAddress, Vec<PublicKeyBindingInfo>>;
 
 /// Data sent by the node query task to the transaction insertion task.
@@ -487,11 +494,10 @@ impl PreparedStatements {
         &self,
         tx: &DBTransaction<'_>,
         bindings: &AccountPublicKeyBindings,
-    ) -> Result<i64, postgres::Error> {
+    ) -> Result<(), postgres::Error> {
         for (account, bindings) in bindings {
             let address: &[u8; 32] = account.as_ref();
             self.delete_key_bindings(tx, address).await?;
-            // TODO: must be in parralel.
             for binding in bindings {
                 let credential_index = binding.credential_index as i32;
                 let key_index = binding.key_index as i32;
@@ -508,7 +514,7 @@ impl PreparedStatements {
                 .await?;
             }
         }
-        Ok(0)
+        Ok(())
     }
 
     async fn delete_key_bindings(
@@ -624,7 +630,6 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
             bindings,
         )
         .await?;
-        // insert_key_change <- new func
         Ok(BlockInsertSuccess {
             duration,
             block_height: bi.block_height,
@@ -640,46 +645,28 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     }
 }
 
+fn key_update_account(bi: &BlockItemSummary) -> Option<AccountAddress> {
+    match &bi.details {
+        BlockItemSummaryDetails::AccountCreation(details) => Some(details.address),
+        BlockItemSummaryDetails::AccountTransaction(details) => match &details.effects {
+            AccountTransactionEffects::CredentialKeysUpdated { .. }
+            | AccountTransactionEffects::CredentialsUpdated { .. } => Some(details.sender),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 async fn parse_key_updates(
     node: &mut v2::Client,
-    bi: &BlockItemSummary,
+    addresses_with_key_update: HashSet<AccountAddress>,
     height: AbsoluteBlockHeight,
 ) -> Result<AccountPublicKeyBindings, NodeError> {
-    let mut key_update_account_identifiers = Vec::new();
-    match &bi.details {
-        concordium_rust_sdk::types::BlockItemSummaryDetails::AccountCreation(
-            account_creation_details,
-        ) => {
-            key_update_account_identifiers.push(account_creation_details.reg_id);
-        }
-        concordium_rust_sdk::types::BlockItemSummaryDetails::AccountTransaction(
-            account_transaction_details,
-        ) => {
-            match &account_transaction_details.effects {
-                // no need for that. We simply get credentials. fetch account info, and create the new insertion.
-                concordium_rust_sdk::types::AccountTransactionEffects::CredentialKeysUpdated {
-                    cred_id,
-                } => {
-                    key_update_account_identifiers.push(*cred_id);
-                }
-                concordium_rust_sdk::types::AccountTransactionEffects::CredentialsUpdated {
-                    new_cred_ids,
-                    removed_cred_ids,
-                    ..
-                } => {
-                    key_update_account_identifiers.extend(new_cred_ids.iter().copied());
-                    key_update_account_identifiers.extend(removed_cred_ids.iter().copied());
-                }
-                _ => (),
-            }
-        }
-        _ => (),
-    };
-    let futures = key_update_account_identifiers.into_iter().map(|cred_id| {
+    let futures = addresses_with_key_update.into_iter().map(|address| {
         let mut client = node.clone();
         async move {
             client
-                .get_account_info(&cred_id.into(), BlockIdentifier::AbsoluteHeight(height))
+                .get_account_info(&address.into(), BlockIdentifier::AbsoluteHeight(height))
                 .await
         }
     });
@@ -700,7 +687,7 @@ fn account_info_to_bindings(infos: Vec<AccountInfo>) -> AccountPublicKeyBindings
         let access_structure: AccountAccessStructure = (&info).into();
         let account_keys_num = access_structure.num_keys();
         let mut bindings = Vec::with_capacity(account_keys_num as usize);
-        let is_simple_account = account_keys_num > 1;
+        let is_simple_account = account_keys_num == 1;
 
         for (credential_index, credentials_keys) in access_structure.keys {
             for (key_index, key) in credentials_keys.keys {
@@ -775,7 +762,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // Map account addresses affected by each summary to their respective canonical
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
-        let mut bindings = HashMap::new();
+        let mut key_update_addresses = HashSet::new();
         for summary in transaction_summaries {
             let affected_addresses = summary.affected_addresses();
             let mut addresses = Vec::with_capacity(affected_addresses.len());
@@ -805,10 +792,12 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                     }
                 }
             }
-            let block_bindings = parse_key_updates(node, &summary, binfo.block_height).await?;
-            bindings.extend(block_bindings);
+            if let Some(address_with_key_update) = key_update_account(&summary) {
+                key_update_addresses.insert(address_with_key_update);
+            }
             with_addresses.push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
         }
+        let bindings = parse_key_updates(node, key_update_addresses, binfo.block_height).await?;
         Ok((binfo, with_addresses, special_events, bindings))
     }
 }
