@@ -58,7 +58,8 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     let mut rows_inserted_count = 0;
     log::info!(
         "Details -- accounts to fetch and insert: {}, batch size: {}",
-        accounts_length, batch_size
+        accounts_length,
+        batch_size
     );
 
     // Create a buffer for querying the account info's
@@ -75,7 +76,9 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
 
                 log::info!(
                     "account info query with node: {} out of: {}, account: {:?}",
-                    query_count, accounts_length, &account.to_string()
+                    query_count,
+                    accounts_length,
+                    &account.to_string()
                 );
 
                 account_info
