@@ -172,13 +172,13 @@ pub trait DatabaseHooks<D, P> {
     async fn insert_into_db(
         db_conn: &mut DBConn<P>,
         data: &D,
-    ) -> Result<BlockInsertSuccess, DatabaseError>;
+    ) -> Result<BlockInsertSuccess, IndexingError>;
 
     /// Invoked by the database thread to request the latest recorded height in
     /// the database.
     async fn on_request_max_height(
         db: &DatabaseClient,
-    ) -> Result<Option<AbsoluteBlockHeight>, DatabaseError>;
+    ) -> Result<Option<AbsoluteBlockHeight>, IndexingError>;
 }
 
 /// A collection of possible errors that can happen while using the node to
@@ -200,6 +200,17 @@ pub enum NodeError {
     /// Query errors, etc.
     #[error("Error happened while using node {0}.")]
     OtherError(#[from] anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+/// Possible errors while indexing blocks into the database
+pub enum IndexingError {
+    /// Database error.
+    #[error("Error using the database {0}.")]
+    PostgresError(#[from] postgres::Error),
+    /// Unknown Data type encountered error
+    #[error("Please update the rust SDK. Reason for this could be due to {0}.")]
+    UnknownData(String),
 }
 
 /// Defines a set of necessary callbacks used while interacting with a node.
@@ -294,6 +305,11 @@ where
                     );
                 }
                 Err(e) => {
+                    if let IndexingError::UnknownData(reasons) = &e {
+                        log::error!("Encountered unknown data variant. Please update the rust SDK. Reason(s): {}", reasons);
+                        return Err(anyhow::anyhow!("Encountered unknown data variant. Please update the rust SDK. Reason(s): {}", reasons));
+                    }
+
                     successive_errors += 1;
                     // wait for 2^(min(successive_errors - 1, 7)) seconds before attempting.
                     // The reason for the min is that we bound the time between reconnects.
