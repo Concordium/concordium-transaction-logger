@@ -12,7 +12,7 @@ use concordium_rust_sdk::{
     },
     v2::{self, BlockIdentifier, FinalizedBlockInfo},
 };
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
@@ -33,6 +33,7 @@ use transaction_logger::{
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
 const MAX_CONNECT_ATTEMPTS: u32 = 6;
+const MAX_NODE_REQUESTS: usize = 20;
 
 /// A collection on arguments necessary to run the service. These are supplied
 /// via the command line.
@@ -662,19 +663,19 @@ async fn parse_key_updates(
     addresses_with_key_update: HashSet<AccountAddress>,
     height: AbsoluteBlockHeight,
 ) -> Result<AccountPublicKeyBindings, NodeError> {
-    let futures = addresses_with_key_update.into_iter().map(|address| {
-        let mut client = node.clone();
-        async move {
-            client
-                .get_account_info(&address.into(), BlockIdentifier::AbsoluteHeight(height))
-                .await
-        }
-    });
-    let account_infos = futures::future::try_join_all(futures)
-        .await?
-        .into_iter()
-        .map(|r| r.response)
-        .collect();
+    let account_infos =
+        futures::stream::iter(addresses_with_key_update.into_iter().map(|address| {
+            let mut client = node.clone();
+            async move {
+                client
+                    .get_account_info(&address.into(), BlockIdentifier::AbsoluteHeight(height))
+                    .await
+                    .map(|res| res.response)
+            }
+        }))
+        .buffer_unordered(MAX_NODE_REQUESTS)
+        .try_collect()
+        .await?;
     let bindings = account_info_to_bindings(account_infos);
     Ok(bindings)
 }
