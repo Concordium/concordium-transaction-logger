@@ -10,8 +10,11 @@ use tokio::time::Instant;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Transaction;
 
-/// Represents one pending insertion row for the `account_public_key_bindings` table to be inserted
+/// Represents one pending insertion row for the `account_public_key_bindings` table to be inserted.
 type PendingPublicKeyBindingInsertionRow = (Vec<u8>, Vec<u8>, i32, i32, bool);
+
+/// Represents a limit of querries done to a node.
+const CONCURRENT_QUERY_LIMIT: usize = 50;
 
 pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow::Result<()> {
     println!("Starting migration now for public keys");
@@ -53,7 +56,6 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     let mut query_count = 0;
     let accounts_length = accounts.len();
     let batch_size = 1000;
-    let concurrent_query_limit = 50usize;
     let mut pending_rows: Vec<PendingPublicKeyBindingInsertionRow> = Vec::with_capacity(batch_size);
     let mut rows_inserted_count = 0;
     println!(
@@ -61,7 +63,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
         accounts_length, batch_size
     );
 
-    // Create a buffer for querying the account info's - `concurrent_query_limit` defines how many are done in parallel with the node
+    // Create a buffer for querying the account info's
     let account_infos: Vec<AccountInfo> = stream::iter(accounts.into_iter())
         .map(|account| {
             let mut client = client.clone();
@@ -71,8 +73,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
                 let account_info = client
                     .get_account_info(&account.into(), last_block_height)
                     .await
-                    .map(|resp| resp.response)
-                    .expect("Expected account info here");
+                    .map(|resp| resp.response);
 
                 println!(
                     "account info query with node: {} out of: {}, account: {:?}",
@@ -82,9 +83,9 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
                 account_info
             }
         })
-        .buffer_unordered(concurrent_query_limit)
-        .collect()
-        .await;
+        .buffer_unordered(CONCURRENT_QUERY_LIMIT)
+        .try_collect()
+        .await?;
 
     // For all our account info's we need to find the credentials and keys in the access structure and build them into a pending row to be inserted. Once we have reached the batch size for pending rows, they will get inserted together
     for (index, account_info) in account_infos.into_iter().enumerate() {
