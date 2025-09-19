@@ -1,9 +1,9 @@
-use clap::AppSettings;
 use concordium_rust_sdk::{id::types::AccountAddress, types::ContractAddress};
-use futures::StreamExt;
+use futures_util::StreamExt;
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio_postgres::NoTls;
-use transaction_logger::postgres::{DatabaseClient, QueryOrder};
+use wallet_proxy_indexer::postgres::{DatabaseClient, QueryOrder};
 
 #[derive(StructOpt)]
 struct App {

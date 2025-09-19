@@ -1,5 +1,4 @@
 use anyhow::Context;
-use clap::AppSettings;
 use concordium_rust_sdk::{
     base::transactions::AccountAccessStructure,
     cis2::{self, TokenAmount, TokenId},
@@ -12,12 +11,13 @@ use concordium_rust_sdk::{
     },
     v2::{self, BlockIdentifier, FinalizedBlockInfo, Upward},
 };
-use futures::{StreamExt, TryStreamExt};
+use futures_util::{StreamExt, TryStreamExt};
 use std::{
     collections::{HashMap, HashSet},
     convert::TryFrom,
     hash::Hash,
 };
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio_postgres::{
     types::{Json, ToSql},
@@ -25,16 +25,13 @@ use tokio_postgres::{
 };
 use tonic::async_trait;
 use tonic::Status;
-use transaction_logger::{
+use wallet_proxy_indexer::{
     postgres::{self, DatabaseClient},
     run_service, set_shutdown, BlockInsertSuccess, DatabaseHooks, IndexingError, NodeError,
     NodeHooks, PrepareStatements, SharedIndexerArgs,
 };
 
-type ContractEvents = Vec<cis2::Event>;
-type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
-
-type DBConn = transaction_logger::DBConn<PreparedStatements>;
+type DBConn = wallet_proxy_indexer::DBConn<PreparedStatements>;
 
 const MAX_CONNECT_ATTEMPTS: u32 = 6;
 const MAX_NODE_REQUESTS: usize = 20;
@@ -590,6 +587,9 @@ async fn get_last_block_height(
     }
 }
 
+type ContractEvents = Vec<cis2::Event>;
+type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
+
 /// Attempt to extract CIS2 events from the block item.
 /// If the transaction is a smart contract init or update transaction then
 /// attempt to parse the events as CIS2 events. If any of the events fail
@@ -706,7 +706,7 @@ async fn parse_key_updates(
     height: AbsoluteBlockHeight,
 ) -> Result<AccountPublicKeyBindings, NodeError> {
     let account_infos =
-        futures::stream::iter(addresses_with_key_update.into_iter().map(|address| {
+        futures_util::stream::iter(addresses_with_key_update.into_iter().map(|address| {
             let mut client = node.clone();
             async move {
                 client
@@ -801,11 +801,8 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             .await?
             .response
             .map(|upward_res| {
-                upward_res.and_then(|upward| match upward {
-                    Upward::Known(special_transaction_outcome) => Ok(special_transaction_outcome),
-                    Upward::Unknown => {
-                        Err(Status::unknown("Unknown SpecialTransactionOutcome type"))
-                    }
+                upward_res.and_then(|upward| {
+                    upward.known_or(Status::unknown("Unknown SpecialTransactionOutcome type"))
                 })
             })
             .try_collect()

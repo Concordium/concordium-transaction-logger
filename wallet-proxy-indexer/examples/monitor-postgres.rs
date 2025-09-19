@@ -5,12 +5,12 @@
 //! For accounts with less activity it is likely going to be better to make use
 //! of postgres notifications to avoid queries which will mostly return nothing.
 
-use clap::AppSettings;
 use concordium_rust_sdk::id::types::AccountAddress;
-use futures::StreamExt;
+use futures_util::StreamExt;
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio_postgres::NoTls;
-use transaction_logger::postgres::{DatabaseClient, QueryOrder};
+use wallet_proxy_indexer::postgres::{DatabaseClient, QueryOrder};
 
 #[derive(StructOpt)]
 struct App {

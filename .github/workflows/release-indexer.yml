@@ -46,7 +46,7 @@ jobs:
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
           context: .
-          file: ./Dockerfile
+          file: ./wallet-proxy-indexer/Dockerfile
           push: true
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tag }}

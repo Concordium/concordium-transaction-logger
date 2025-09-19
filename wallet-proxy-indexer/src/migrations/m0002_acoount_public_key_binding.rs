@@ -5,7 +5,7 @@ use concordium_rust_sdk::{
     types::{AbsoluteBlockHeight, AccountInfo},
     v2::{self, BlockIdentifier},
 };
-use futures::{stream, StreamExt, TryStreamExt};
+use futures_util::{stream, StreamExt, TryStreamExt};
 use tokio::time::Instant;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::Transaction;
