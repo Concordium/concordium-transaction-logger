@@ -1,17 +1,23 @@
 use anyhow::Context;
 use clap::AppSettings;
 use concordium_rust_sdk::{
+    base::transactions::AccountAccessStructure,
     cis2::{self, TokenAmount, TokenId},
-    common::{types::Timestamp, SerdeSerialize},
+    common::{types::Timestamp, SerdeSerialize, Serial},
     id::types::AccountAddress,
     types::{
-        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, BlockItemSummary,
-        ContractAddress, SpecialTransactionOutcome,
+        hashes::BlockHash, queries::BlockInfo, AbsoluteBlockHeight, AccountInfo,
+        AccountTransactionEffects, BlockItemSummary, BlockItemSummaryDetails, ContractAddress,
+        SpecialTransactionOutcome,
     },
-    v2::{self, FinalizedBlockInfo, Upward},
+    v2::{self, BlockIdentifier, FinalizedBlockInfo, Upward},
 };
 use futures::{StreamExt, TryStreamExt};
-use std::{collections::HashSet, convert::TryFrom, hash::Hash};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    hash::Hash,
+};
 use structopt::StructOpt;
 use tokio_postgres::{
     types::{Json, ToSql},
@@ -31,6 +37,7 @@ type ContractEffects = Vec<(ContractAddress, ContractEvents)>;
 type DBConn = transaction_logger::DBConn<PreparedStatements>;
 
 const MAX_CONNECT_ATTEMPTS: u32 = 6;
+const MAX_NODE_REQUESTS: usize = 20;
 
 /// A collection on arguments necessary to run the service. These are supplied
 /// via the command line.
@@ -154,12 +161,28 @@ struct BlockItemSummaryWithCanonicalAddresses {
     pub(crate) addresses: Vec<AccountAddress>,
 }
 
+/// Data to be saved in a row of public key to account address bindings table.
+struct PublicKeyBindingInfo {
+    /// Public key related to an account address.
+    public_key: Vec<u8>,
+    /// Index of a credential with an access to the account.
+    credential_index: u8,
+    /// Index of a key in a credential.
+    key_index: u8,
+    /// Flag that indicates if there is only one account address associated with a given public key.
+    is_simple_account: bool,
+}
+
+/// List of account address and thier public keys.
+type AccountPublicKeyBindings = HashMap<AccountAddress, Vec<PublicKeyBindingInfo>>;
+
 /// Data sent by the node query task to the transaction insertion task.
 /// Contains all the information needed to build the transaction index.
 type TransactionLogData = (
     BlockInfo,
     Vec<BlockItemSummaryWithCanonicalAddresses>,
     Vec<SpecialTransactionOutcome>,
+    AccountPublicKeyBindings,
 );
 
 /// Prepared statements for all insertions. Prepared statements are
@@ -175,6 +198,10 @@ struct PreparedStatements {
     cis2_increase_total_supply: tokio_postgres::Statement,
     /// Decrease the total supply of a given token.
     cis2_decrease_total_supply: tokio_postgres::Statement,
+    /// Insert new public key to account address bindings.
+    insert_key_bindings: tokio_postgres::Statement,
+    /// Delete the old public key to account address bindings.
+    delete_key_bindings: tokio_postgres::Statement,
 }
 
 #[async_trait]
@@ -226,12 +253,36 @@ impl PrepareStatements for PreparedStatements {
             )
             .await?;
 
+        let insert_key_bindings = client
+            .as_mut()
+            .prepare(
+                "INSERT INTO account_public_key_bindings (
+                    address,
+                    public_key,
+                    credential_index,
+                    key_index,
+                    is_simple_account
+                )
+                VALUES ($1, $2, $3, $4, $5)",
+            )
+            .await?;
+
+        let delete_key_bindings = client
+            .as_mut()
+            .prepare(
+                "DELETE FROM account_public_key_bindings
+                WHERE address = $1",
+            )
+            .await?;
+
         Ok(Self {
             insert_summary,
             insert_ati,
             insert_cti,
             cis2_increase_total_supply,
             cis2_decrease_total_supply,
+            insert_key_bindings,
+            delete_key_bindings,
         })
     }
 }
@@ -416,7 +467,6 @@ impl PreparedStatements {
         ts: &BlockItemSummary,
     ) -> Result<(), IndexingError> {
         let effects = get_cis2_events(ts)?;
-
         for (ca, events) in effects {
             for event in events {
                 match event {
@@ -455,6 +505,42 @@ impl PreparedStatements {
         }
         Ok(())
     }
+
+    async fn update_key_bindings(
+        &self,
+        tx: &DBTransaction<'_>,
+        bindings: &AccountPublicKeyBindings,
+    ) -> Result<(), postgres::Error> {
+        for (account, bindings) in bindings {
+            let address: &[u8; 32] = account.as_ref();
+            self.delete_key_bindings(tx, address).await?;
+            for binding in bindings {
+                let credential_index = binding.credential_index as i32;
+                let key_index = binding.key_index as i32;
+                tx.execute(
+                    &self.insert_key_bindings,
+                    &[
+                        &&address[..],
+                        &binding.public_key,
+                        &credential_index,
+                        &key_index,
+                        &binding.is_simple_account,
+                    ],
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn delete_key_bindings(
+        &self,
+        tx: &DBTransaction<'_>,
+        address: &[u8],
+    ) -> Result<(), postgres::Error> {
+        tx.execute(&self.delete_key_bindings, &[&address]).await?;
+        Ok(())
+    }
 }
 
 /// Insert block into the database. Inserts transactionally by block to
@@ -466,6 +552,7 @@ async fn insert_block(
     block_height: AbsoluteBlockHeight,
     item_summaries: &[BlockItemSummaryWithCanonicalAddresses],
     special_events: &[SpecialTransactionOutcome],
+    bindings: &AccountPublicKeyBindings,
 ) -> Result<chrono::Duration, IndexingError> {
     let start = chrono::Utc::now();
     let db_tx = db.client.as_mut().transaction().await?;
@@ -483,6 +570,7 @@ async fn insert_block(
             .insert_special(&db_tx, block_hash, block_time, block_height, special)
             .await?;
     }
+    prepared.update_key_bindings(&db_tx, bindings).await?;
     db_tx.commit().await?;
     let end = chrono::Utc::now().signed_duration_since(start);
     Ok(end)
@@ -568,7 +656,7 @@ struct DatabaseState;
 impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
     async fn insert_into_db(
         db_conn: &mut DBConn,
-        (bi, item_summaries, special_events): &TransactionLogData,
+        (bi, item_summaries, special_events, bindings): &TransactionLogData,
     ) -> Result<BlockInsertSuccess, IndexingError> {
         let duration = insert_block(
             db_conn,
@@ -577,9 +665,9 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
             bi.block_height,
             item_summaries,
             special_events,
+            bindings,
         )
         .await?;
-
         Ok(BlockInsertSuccess {
             duration,
             block_height: bi.block_height,
@@ -593,6 +681,73 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
         let height = get_last_block_height(db).await?;
         Ok(height)
     }
+}
+
+fn key_update_account(bi: &BlockItemSummary) -> Option<AccountAddress> {
+    match &bi.details {
+        Upward::Known(details) => match details {
+            BlockItemSummaryDetails::AccountCreation(ac) => Some(ac.address),
+            BlockItemSummaryDetails::AccountTransaction(at) => match &at.effects {
+                Upward::Known(AccountTransactionEffects::CredentialKeysUpdated { .. })
+                | Upward::Known(AccountTransactionEffects::CredentialsUpdated { .. }) => {
+                    Some(at.sender)
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+async fn parse_key_updates(
+    node: &mut v2::Client,
+    addresses_with_key_update: HashSet<AccountAddress>,
+    height: AbsoluteBlockHeight,
+) -> Result<AccountPublicKeyBindings, NodeError> {
+    let account_infos =
+        futures::stream::iter(addresses_with_key_update.into_iter().map(|address| {
+            let mut client = node.clone();
+            async move {
+                client
+                    .get_account_info(&address.into(), BlockIdentifier::AbsoluteHeight(height))
+                    .await
+                    .map(|res| res.response)
+            }
+        }))
+        .buffer_unordered(MAX_NODE_REQUESTS)
+        .try_collect()
+        .await?;
+    let bindings = account_info_to_bindings(account_infos);
+    Ok(bindings)
+}
+
+fn account_info_to_bindings(infos: Vec<AccountInfo>) -> AccountPublicKeyBindings {
+    let mut res = AccountPublicKeyBindings::new();
+    for info in infos {
+        let address = info.account_address;
+
+        let access_structure: AccountAccessStructure = (&info).into();
+        let account_keys_num = access_structure.num_keys();
+        let mut bindings = Vec::with_capacity(account_keys_num as usize);
+        let is_simple_account = account_keys_num == 1;
+
+        for (credential_index, credentials_keys) in access_structure.keys {
+            for (key_index, key) in credentials_keys.keys {
+                let mut public_key = Vec::new();
+                key.serial(&mut public_key);
+                let binding_info = PublicKeyBindingInfo {
+                    public_key,
+                    credential_index: credential_index.into(),
+                    key_index: key_index.into(),
+                    is_simple_account,
+                };
+                bindings.push(binding_info);
+            }
+        }
+        res.entry(address).or_insert(bindings);
+    }
+    res
 }
 
 /// Holds a set of canonical account addresses already discovered while
@@ -659,6 +814,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         // Map account addresses affected by each summary to their respective canonical
         // address
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
+        let mut key_update_addresses = HashSet::new();
         for summary in transaction_summaries {
             let affected_addresses = summary.affected_addresses().known_or_else(|| {
                 Status::unknown("Could not determine affected addresses for BlockItem")
@@ -691,10 +847,13 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
                     }
                 }
             }
+            if let Some(address_with_key_update) = key_update_account(&summary) {
+                key_update_addresses.insert(address_with_key_update);
+            }
             with_addresses.push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
         }
-
-        Ok((binfo, with_addresses, special_events))
+        let bindings = parse_key_updates(node, key_update_addresses, binfo.block_height).await?;
+        Ok((binfo, with_addresses, special_events, bindings))
     }
 }
 

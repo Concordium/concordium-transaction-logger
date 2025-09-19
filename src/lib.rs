@@ -56,7 +56,10 @@ impl DBConfiguration {
     }
 
     /// Create a [`DBConn`] connection, and run the database migration task.
-    async fn get_new_conn<P: PrepareStatements>(&mut self) -> anyhow::Result<DBConn<P>> {
+    async fn get_new_conn<P: PrepareStatements>(
+        &mut self,
+        endpoints: &[v2::Endpoint],
+    ) -> anyhow::Result<DBConn<P>> {
         let mut client = DatabaseClient::create(self.pg_config.clone(), postgres::NoTls).await?;
 
         let cancel_token = CancellationToken::new();
@@ -67,7 +70,7 @@ impl DBConfiguration {
         // remaining database migrations until the `SchemaVersion::LATEST` is
         // reached.
         let migration_task =
-            cancel_token.run_until_cancelled(migrations::run_migrations(&mut client));
+            cancel_token.run_until_cancelled(migrations::run_migrations(&mut client, endpoints));
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                log::info!("Migrations aborted, shutting down");
@@ -96,11 +99,12 @@ impl DBConfiguration {
     async fn try_connect<P: PrepareStatements>(
         &mut self,
         max_connect_attemps: u32,
+        endpoints: &[v2::Endpoint],
     ) -> anyhow::Result<DBConn<P>> {
         let mut i = 1;
 
         loop {
-            match self.get_new_conn().await {
+            match self.get_new_conn(endpoints).await {
                 Ok(c) => return Ok(c),
                 Err(e) if i < max_connect_attemps => {
                     let delay = std::time::Duration::from_millis(500 * (1 << i));
@@ -263,6 +267,7 @@ async fn use_db<D, P, H>(
     start_from_sender: tokio::sync::oneshot::Sender<AbsoluteBlockHeight>, // start height
     mut receiver: tokio::sync::mpsc::Receiver<D>,
     max_connect_attemps: u32,
+    endpoints: &[v2::Endpoint],
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
@@ -317,7 +322,7 @@ where
                         delay.as_millis()
                     );
                     tokio::time::sleep(delay).await;
-                    let new_db = match db_config.try_connect(max_connect_attemps).await {
+                    let new_db = match db_config.try_connect(max_connect_attemps, endpoints).await {
                         Ok(db) => db,
                         Err(e) => {
                             receiver.close();
@@ -365,6 +370,7 @@ async fn db_process<D, P, H>(
     receiver: tokio::sync::mpsc::Receiver<D>,
     shutdown_receiver: tokio::sync::watch::Receiver<()>,
     max_connect_attemps: u32,
+    endpoints: Vec<v2::Endpoint>,
 ) -> anyhow::Result<()>
 where
     P: PrepareStatements,
@@ -375,13 +381,13 @@ where
     let mut sr = shutdown_receiver.clone();
     let mut db = tokio::select! {
         _ = sr.changed() => anyhow::bail!("Service shut down manually"),
-        db_res = db_config.try_connect(max_connect_attemps) => db_res?
+        db_res = db_config.try_connect(max_connect_attemps, &endpoints) => db_res?
     };
 
     let mut sr = shutdown_receiver.clone();
     tokio::select! {
         _ = sr.changed() => (),
-        res = use_db::<D, P, H>(&mut db, &mut db_config, start_from_sender, receiver, max_connect_attemps) => res?
+        res = use_db::<D, P, H>(&mut db, &mut db_config, start_from_sender, receiver, max_connect_attemps, &endpoints) => res?
     };
 
     // stop the database connection.
@@ -498,13 +504,14 @@ where
     // Create a channel between the task querying the node and the task logging
     // transactions.
     let (sender, receiver) = tokio::sync::mpsc::channel(100);
-
+    let endpoints = app_config.endpoint.clone();
     let db_write_handle = tokio::spawn(db_process::<D, P, DH>(
         db_config,
         height_sender,
         receiver,
         shutdown_receiver.clone(),
         app_config.max_connect_attemps,
+        endpoints,
     ));
     // The height we should start querying the node at.
     // If the sender died we simply terminate the program.
