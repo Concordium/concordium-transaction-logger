@@ -55,7 +55,6 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     let accounts_length = accounts.len();
     let batch_size = 1000;
     let mut pending_rows: Vec<PendingPublicKeyBindingInsertionRow> = Vec::with_capacity(batch_size);
-    let mut rows_inserted_count = 0;
     log::info!(
         "Details -- accounts to fetch and insert: {}, batch size: {}",
         accounts_length,
@@ -69,19 +68,10 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
             query_count += 1;
 
             async move {
-                let account_info = client
+                client
                     .get_account_info(&account.into(), last_block_height)
                     .await
-                    .map(|resp| resp.response);
-
-                log::info!(
-                    "account info query with node: {} out of: {}, account: {:?}",
-                    query_count,
-                    accounts_length,
-                    &account.to_string()
-                );
-
-                account_info
+                    .map(|resp| resp.response)
             }
         })
         .buffer_unordered(CONCURRENT_QUERY_LIMIT)
@@ -89,7 +79,7 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
         .await?;
 
     // For all our account info's we need to find the credentials and keys in the access structure and build them into a pending row to be inserted. Once we have reached the batch size for pending rows, they will get inserted together
-    for (index, account_info) in account_infos.into_iter().enumerate() {
+    for account_info in account_infos.into_iter() {
         let address: Vec<u8> = account_info.account_address.0.clone().to_vec();
         let access_structure: AccountAccessStructure = (&account_info).into();
         let is_simple_account = access_structure.num_keys() == 1;
@@ -115,8 +105,6 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
         // Flush batch and write to the database once we have reached the batch size
         if pending_rows.len() >= batch_size {
             bulk_insert_pending_rows(tx, &pending_rows).await?;
-            rows_inserted_count += pending_rows.len();
-            log::info!("Bulk insert done now for account index: {} out of: {} accounts. Rows inserted so far: {}", index, accounts_length, rows_inserted_count);
             pending_rows.clear();
         }
     }
@@ -124,11 +112,13 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     // Flush any remaining pending rows to the DB (occurs when less than the batch limit was reached at the end)
     if !pending_rows.is_empty() {
         bulk_insert_pending_rows(tx, &pending_rows).await?;
-        log::info!("Finalized last bulk insert for {} rows", pending_rows.len());
         pending_rows.clear();
     }
 
-    log::info!("elasped time was: {:?}", start.elapsed());
+    log::info!(
+        "The elasped time for inserting the account address to public key bindings was: {:?}",
+        start.elapsed()
+    );
     Ok(())
 }
 

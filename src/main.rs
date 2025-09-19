@@ -530,7 +530,6 @@ impl PreparedStatements {
                 .await?;
             }
         }
-        log::info!("inserted {} bindings into DB", bindings.len());
         Ok(())
     }
 
@@ -687,14 +686,10 @@ impl DatabaseHooks<TransactionLogData, PreparedStatements> for DatabaseState {
 fn key_update_account(bi: &BlockItemSummary) -> Option<AccountAddress> {
     match &bi.details {
         Upward::Known(details) => match details {
-            BlockItemSummaryDetails::AccountCreation(ac) => {
-                log::info!("account creation transaction received");
-                Some(ac.address)
-            }
+            BlockItemSummaryDetails::AccountCreation(ac) => Some(ac.address),
             BlockItemSummaryDetails::AccountTransaction(at) => match &at.effects {
                 Upward::Known(AccountTransactionEffects::CredentialKeysUpdated { .. })
                 | Upward::Known(AccountTransactionEffects::CredentialsUpdated { .. }) => {
-                    log::info!("account key update transaction received");
                     Some(at.sender)
                 }
                 _ => None,
@@ -857,10 +852,6 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
             }
             with_addresses.push(BlockItemSummaryWithCanonicalAddresses { summary, addresses })
         }
-        log::info!(
-            "total accounts with keys to be updated {}",
-            key_update_addresses.len()
-        );
         let bindings = parse_key_updates(node, key_update_addresses, binfo.block_height).await?;
         Ok((binfo, with_addresses, special_events, bindings))
     }
