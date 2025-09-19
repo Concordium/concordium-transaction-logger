@@ -4,12 +4,8 @@
 
 - Update the Rust SDK for better forwards compatibility with future node versions and revised error handling or reporting for unknown transaction and event types. If within the database hook callback has unknown data variants in the block processing, the process would complain and cease, raising `IndexingError` to alert.
 - Database schema version: 2.
-- Added database migration to create `account_public_key_bindings` and inserts data for all account public key mappings into this table
-- Added `PublicKeyBindingInfo` type that represents public key info of accounts access structure.
-- Added `PublicKeyBindingInfo` into `TransactionLogData`.
-- Added `insert_key_bindings` and `delete_key_bindings` feilds into `PreparedStatements`.
-- The DB task is extended to save account's address and public key binding.
-- The Node task is extended to monitor for public key update and new account creation transactions.
+- Added database migration to create `account_public_key_bindings` and inserts data for all account public key mappings into this table.
+- The indexer is extended to monitor for the updates in public keys to accounts mapping and insert them into the `account_public_key_bindings` table.
 
 ## [0.14.0] - 2025-08-07
 
