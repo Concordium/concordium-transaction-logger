@@ -1,0 +1,24 @@
+[package]
+name = "wallet-proxy"
+version = "0.1.0"
+edition = "2024"
+description = "Wallet Proxy Service (exposes Wallet Proxy API)"
+authors.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+clap.workspace = true
+concordium-rust-sdk.workspace = true
+futures-util.workspace = true
+prometheus-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
