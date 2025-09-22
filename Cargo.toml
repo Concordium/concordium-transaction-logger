@@ -27,6 +27,7 @@ log = "0.4.28" # deprecated usage, should be replaced with tracing stack
 num-derive = "0.4.2"
 num-traits = "0.2.19"
 prometheus-client = "0.24.0"
+reqwest = "0.12.23"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.143"
 structopt = "0.3.26" # deprecated usage, should be replaced with claps own derive functionality

@@ -4,3 +4,4 @@ pub mod configuration;
 mod monitoring_api;
 /// The Wallet Proxy service, including all endpoints
 pub mod service;
+pub mod logging;
