@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+- Fix an error caused by the Rust SDK incorrectly handling protocol versions, causing blocks on P6 to fail processing.
+
 ## [0.15.0] - 2025-09-19
 
 Database schema version: 2
