@@ -252,7 +252,7 @@ pub async fn set_shutdown(shutdown_sender: tokio::sync::watch::Sender<()>) -> an
         let ctrl_break = Box::pin(ctrl_break_stream.recv());
         let ctrl_c = Box::pin(ctrl_c_stream.recv());
 
-        futures::future::select(ctrl_break, ctrl_c).await;
+        futures_util::future::select(ctrl_break, ctrl_c).await;
     }
 
     shutdown_sender.send(())?;

@@ -81,7 +81,8 @@ pub async fn run(tx: &mut Transaction<'_>, endpoints: &[v2::Endpoint]) -> anyhow
     // For all our account info's we need to find the credentials and keys in the access structure and build them into a pending row to be inserted. Once we have reached the batch size for pending rows, they will get inserted together
     for account_info in account_infos.into_iter() {
         let address: Vec<u8> = account_info.account_address.0.clone().to_vec();
-        let access_structure: AccountAccessStructure = (&account_info).into();
+        let access_structure: AccountAccessStructure = v2::Upward::from(&account_info)
+            .known_or(anyhow::anyhow!("Unknown account access structure"))?;
         let is_simple_account = access_structure.num_keys() == 1;
 
         for (cred_index, credential_keys) in access_structure.keys {

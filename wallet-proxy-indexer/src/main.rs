@@ -9,7 +9,7 @@ use concordium_rust_sdk::{
         AccountTransactionEffects, BlockItemSummary, BlockItemSummaryDetails, ContractAddress,
         SpecialTransactionOutcome,
     },
-    v2::{self, BlockIdentifier, FinalizedBlockInfo, Upward},
+    v2::{self, upward::UnknownDataError, BlockIdentifier, FinalizedBlockInfo, Upward},
 };
 use futures_util::{StreamExt, TryStreamExt};
 use std::{
@@ -718,16 +718,23 @@ async fn parse_key_updates(
         .buffer_unordered(MAX_NODE_REQUESTS)
         .try_collect()
         .await?;
-    let bindings = account_info_to_bindings(account_infos);
+    let bindings = account_info_to_bindings(account_infos).map_err(|e| {
+        tonic::Status::invalid_argument(format!(
+            "Error parsing account info to get public key bindings: {}",
+            e
+        ))
+    })?;
     Ok(bindings)
 }
 
-fn account_info_to_bindings(infos: Vec<AccountInfo>) -> AccountPublicKeyBindings {
+fn account_info_to_bindings(
+    infos: Vec<AccountInfo>,
+) -> Result<AccountPublicKeyBindings, UnknownDataError> {
     let mut res = AccountPublicKeyBindings::new();
     for info in infos {
         let address = info.account_address;
 
-        let access_structure: AccountAccessStructure = (&info).into();
+        let access_structure: AccountAccessStructure = Upward::from(&info).known_or_err()?;
         let account_keys_num = access_structure.num_keys();
         let mut bindings = Vec::with_capacity(account_keys_num as usize);
         let is_simple_account = account_keys_num == 1;
@@ -747,7 +754,7 @@ fn account_info_to_bindings(infos: Vec<AccountInfo>) -> AccountPublicKeyBindings
         }
         res.entry(address).or_insert(bindings);
     }
-    res
+    Ok(res)
 }
 
 /// Holds a set of canonical account addresses already discovered while
