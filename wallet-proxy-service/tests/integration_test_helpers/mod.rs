@@ -1,7 +1,7 @@
 pub mod node_mock;
 pub mod rest;
 pub mod server;
-mod fixtures;
+pub mod fixtures;
 
 #[derive(Debug)]
 pub struct ServerProperties {

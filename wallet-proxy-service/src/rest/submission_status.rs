@@ -3,8 +3,9 @@ use anyhow::Context;
 use axum::Json;
 use axum::extract::{Path, State};
 use concordium_rust_sdk::base::hashes::TransactionHash;
+use concordium_rust_sdk::common::types::AccountAddress;
 use concordium_rust_sdk::types;
-use wallet_proxy_api::SubmissionStatus;
+use wallet_proxy_api::{SubmissionStatus, TransactionOutcome, TransactionStatus};
 
 /// GET Handler for route `/v0/submissionStatus`.
 pub async fn submission_status(
@@ -21,5 +22,10 @@ pub async fn submission_status(
 }
 
 fn from_sdk(txn_status: types::TransactionStatus) -> SubmissionStatus {
-    todo!()
+    SubmissionStatus {
+        status: TransactionStatus::Received,
+        sender: AccountAddress(Default::default()),
+        transaction_hash: TransactionHash::new(Default::default()),
+        outcome: TransactionOutcome::Success,
+    }
 }
