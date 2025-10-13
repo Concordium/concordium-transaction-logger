@@ -31,3 +31,14 @@ async fn test_submission_status() {
     let submission_status: SubmissionStatus = resp.json().await.unwrap();
     assert_eq!(submission_status.status, TransactionStatus::Received);
 }
+
+#[tokio::test]
+async fn test_submission_status_absent() {
+    let handle = server::start_server();
+    let rest_client = rest::rest_client(&handle);
+    let node_mock = node_mock::mock(&handle);
+
+    let txn_hash = fixtures::generate_txn_hash();
+
+    todo!()
+}

@@ -1,11 +1,10 @@
 use crate::rest::{RestResult, RestState};
 use anyhow::Context;
-use axum::Json;
 use axum::extract::{Path, State};
+use axum::Json;
 use concordium_rust_sdk::base::hashes::TransactionHash;
-use concordium_rust_sdk::common::types::AccountAddress;
 use concordium_rust_sdk::types;
-use wallet_proxy_api::{SubmissionStatus, TransactionOutcome, TransactionStatus};
+use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
 
 /// GET Handler for route `/v0/submissionStatus`.
 pub async fn submission_status(
@@ -18,14 +17,30 @@ pub async fn submission_status(
         .await
         .context("get_block_item_status")?;
 
-    Ok(Json(from_sdk(sdk_transaction_status)))
+    Ok(Json(to_submission_status(sdk_transaction_status)))
 }
 
-fn from_sdk(txn_status: types::TransactionStatus) -> SubmissionStatus {
+fn to_submission_status(txn_status: types::TransactionStatus) -> SubmissionStatus {
+    let status = match &txn_status {
+        types::TransactionStatus::Received => TransactionStatus::Received,
+        types::TransactionStatus::Finalized(_) => TransactionStatus::Finalized,
+        types::TransactionStatus::Committed(_) => TransactionStatus::Committed,
+    };
+
     SubmissionStatus {
-        status: TransactionStatus::Received,
-        sender: AccountAddress(Default::default()),
-        transaction_hash: TransactionHash::new(Default::default()),
-        outcome: TransactionOutcome::Success,
+        status,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_submission_status_received() {
+        let status = types::TransactionStatus::Received;
+
+        let submission = to_submission_status(status);
+        assert_eq!(submission.status, TransactionStatus::Received);
     }
 }
