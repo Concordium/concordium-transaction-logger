@@ -14,4 +14,3 @@ pub enum TransactionStatus {
     Committed,
     Finalized,
 }
-

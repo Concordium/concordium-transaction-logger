@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use axum::extract::State;
 use prometheus_client::registry::Registry;
+use std::sync::Arc;
 
 /// GET Handler for route `/metrics`.
 /// Exposes the metrics in the registry in the Prometheus format.

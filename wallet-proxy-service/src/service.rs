@@ -28,12 +28,9 @@ pub async fn run_service(cli: Cli) -> anyhow::Result<()> {
         info!("Server is running at {:?}", cli.listen);
 
         let rest_router = rest::rest_router(&cli, &mut metrics_registry).await?;
-        axum::serve(
-            tcp_listener,
-            rest_router,
-        )
-        .with_graceful_shutdown(stop_signal.cancelled_owned())
-        .into_future()
+        axum::serve(tcp_listener, rest_router)
+            .with_graceful_shutdown(stop_signal.cancelled_owned())
+            .into_future()
     };
 
     let monitoring_task = {

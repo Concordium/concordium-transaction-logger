@@ -6,6 +6,8 @@ description = "Wallet Proxy Service (exposes Wallet Proxy API)"
 authors.workspace = true
 
 [dependencies]
+wallet-proxy-api.workspace = true
+
 anyhow.workspace = true
 axum.workspace = true
 chrono.workspace = true
@@ -22,7 +24,6 @@ tokio-util.workspace = true
 tower.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-wallet-proxy-api = {path = "../wallet-proxy-api"}
 
 [dev-dependencies]
 mocktail.workspace = true

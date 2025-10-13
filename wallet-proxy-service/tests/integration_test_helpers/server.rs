@@ -1,10 +1,8 @@
-
-
 use crate::integration_test_helpers::{ServerProperties, node_mock};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use std::{ thread, time::Duration};
+use std::{thread, time::Duration};
 use tracing::info;
 use tracing_subscriber::filter;
 use wallet_proxy::configuration::Cli;

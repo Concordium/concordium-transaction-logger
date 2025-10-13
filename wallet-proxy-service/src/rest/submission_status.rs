@@ -1,7 +1,7 @@
-use crate::rest::{RestResult, RestState};
+use crate::rest::{AppPath, RestResult, RestState};
 use anyhow::Context;
-use axum::extract::{Path, State};
 use axum::Json;
+use axum::extract::{Path, State};
 use concordium_rust_sdk::base::hashes::TransactionHash;
 use concordium_rust_sdk::types;
 use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
@@ -9,7 +9,7 @@ use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
 /// GET Handler for route `/v0/submissionStatus`.
 pub async fn submission_status(
     State(mut state): State<RestState>,
-    Path(txn_hash): Path<TransactionHash>,
+    AppPath(txn_hash): AppPath<TransactionHash>,
 ) -> RestResult<Json<SubmissionStatus>> {
     let sdk_transaction_status = state
         .node_client
@@ -27,9 +27,7 @@ fn to_submission_status(txn_status: types::TransactionStatus) -> SubmissionStatu
         types::TransactionStatus::Committed(_) => TransactionStatus::Committed,
     };
 
-    SubmissionStatus {
-        status,
-    }
+    SubmissionStatus { status }
 }
 
 #[cfg(test)]

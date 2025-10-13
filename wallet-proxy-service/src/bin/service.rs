@@ -1,6 +1,5 @@
 use clap::Parser;
 
-
 use wallet_proxy::configuration::Cli;
 use wallet_proxy::{logging, service};
 

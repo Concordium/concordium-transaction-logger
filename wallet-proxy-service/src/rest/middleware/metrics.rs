@@ -1,6 +1,6 @@
 use axum::http;
-use futures_util::future::BoxFuture;
 use futures_util::FutureExt;
+use futures_util::future::BoxFuture;
 use prometheus_client::registry::Unit;
 use prometheus_client::{
     encoding::EncodeLabelSet,
@@ -64,7 +64,7 @@ struct QueryLabels {
 impl<S, ReqBody, RespBody> tower::Service<http::Request<ReqBody>> for MetricsService<S>
 where
     S: tower::Service<http::Request<ReqBody>, Response = http::Response<RespBody>>,
-    S::Future: Send + 'static
+    S::Future: Send + 'static,
 {
     type Error = S::Error;
     type Future = BoxFuture<'static, <S::Future as Future>::Output>;

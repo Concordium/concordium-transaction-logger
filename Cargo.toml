@@ -14,9 +14,11 @@ exclude = ["deps"]
 authors = ["Concordium <developers@concordium.com>"]
 
 [workspace.dependencies]
+wallet-proxy-api = {path = "wallet-proxy-api"}
+
 anyhow = "1.0.99"
 async-trait = "0.1.89"
-axum = { version = "0.8.4", features = ["http2"] }
+axum = { version = "0.8.4", features = ["http2", "macros"] }
 chrono = { version = "0.4.41", features = ["serde"] }
 clap = { version = "4.5.47", features = ["derive", "env", "cargo"] }
 concordium-rust-sdk = { path = "deps/concordium-rust-sdk" }

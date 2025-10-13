@@ -1,11 +1,12 @@
 //! Test of generic errors
 
-use concordium_rust_sdk::v2::generated;
 use crate::integration_test_helpers::{fixtures, node_mock, rest, server};
+use concordium_rust_sdk::v2::generated;
 use reqwest::StatusCode;
 use wallet_proxy_api::{ErrorCode, ErrorResponse};
 
-/// Test that request to node fails
+/// Test request to node fails. Should result in
+/// internal error code.
 #[tokio::test]
 async fn test_node_request_fails() {
     let handle = server::start_server();
@@ -20,29 +21,44 @@ async fn test_node_request_fails() {
         then.internal_server_error();
     });
 
-
-    let resp = rest_client.get(format!("v0/submissionStatus/{}", txn_hash)).send().await.unwrap();
+    let resp = rest_client
+        .get(format!("v0/submissionStatus/{}", txn_hash))
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let err_resp: ErrorResponse = resp.json().await.unwrap();
     assert_eq!(err_resp.error, ErrorCode::Internal);
-    assert!(err_resp.error_message.contains("RPC error"), "message: {}", err_resp.error_message);
+    assert!(
+        err_resp.error_message.contains("RPC error"),
+        "message: {}",
+        err_resp.error_message
+    );
 }
 
-/// Test that parsing request fails
+/// Test where parsing request fails because path parameter
+/// fails.
 #[tokio::test]
-async fn test_invalid_request() {
+async fn test_invalid_request_path_parameter() {
     let handle = server::start_server();
 
     // invalid transaction hash
     let txn_hash = "aaa";
 
     let rest_client = rest::rest_client(&handle);
-    let resp = rest_client.get(format!("v0/submissionStatus/{}", txn_hash)).send().await.unwrap();
+    let resp = rest_client
+        .get(format!("v0/submissionStatus/{}", txn_hash))
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let err_resp: ErrorResponse = resp.json().await.unwrap();
     assert_eq!(err_resp.error, ErrorCode::InvalidRequest);
-    assert!(err_resp.error_message.contains("hest"), "message: {}", err_resp.error_message);
+    assert!(
+        err_resp.error_message.contains("invalid path parameters"),
+        "message: {}",
+        err_resp.error_message
+    );
 }
-
