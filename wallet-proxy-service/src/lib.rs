@@ -1,7 +1,9 @@
 /// Configuration of the Wallet Proxy service
 pub mod configuration;
+pub mod logging;
 /// Monitoring API router (health, metrics, etc.)
-mod monitoring_api;
+mod monitoring;
 /// The Wallet Proxy service, including all endpoints
 pub mod service;
-pub mod logging;
+/// REST API router
+pub mod rest;

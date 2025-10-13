@@ -1,23 +1,15 @@
-
-
+use crate::integration_test_helpers::{rest, server};
 use reqwest::StatusCode;
-use serde_json::value;
-use std::time::Duration;
-use crate::MONITORING_HOST_PORT;
+use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
 
-/// Test scraping metrics
 #[tokio::test]
-async fn test_submission_status1() {
-    crate::start_server();
+async fn test_submission_status() {
+    let handle = server::start_server();
 
-    let client = reqwest::Client::new();
-    let status = client
-        .get(format!("http://{}/metrics", MONITORING_HOST_PORT))
-        .send()
-        .await
-        .unwrap()
-        .status();
+    let rest_client = rest::rest_client(&handle);
+    let resp = rest_client.get("v0/submissionStatus").send().await.unwrap();
 
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::OK);
+    let submission_status: SubmissionStatus = resp.json().await.unwrap();
+    assert_eq!(submission_status.status, TransactionStatus::Finalized);
 }
-

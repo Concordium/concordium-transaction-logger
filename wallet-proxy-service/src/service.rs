@@ -1,5 +1,5 @@
 use crate::configuration::Cli;
-use crate::monitoring_api;
+use crate::{monitoring, rest};
 use anyhow::Context;
 use futures_util::TryFutureExt;
 use prometheus_client::metrics;
@@ -27,9 +27,10 @@ pub async fn run_service(cli: Cli) -> anyhow::Result<()> {
         let stop_signal = cancel_token.child_token();
         info!("Server is running at {:?}", cli.listen);
 
+        let rest_router = rest::rest_router(&cli, &mut metrics_registry).await?;
         axum::serve(
             tcp_listener,
-            axum::Router::new(), // TODO implement as part of COR-1810
+            rest_router,
         )
         .with_graceful_shutdown(stop_signal.cancelled_owned())
         .into_future()
@@ -44,7 +45,7 @@ pub async fn run_service(cli: Cli) -> anyhow::Result<()> {
             "Monitoring server is running at {:?}",
             cli.monitoring_listen
         );
-        let monitoring_router = monitoring_api::monitoring_router(metrics_registry)?;
+        let monitoring_router = monitoring::monitoring_router(metrics_registry)?;
         axum::serve(tcp_listener, monitoring_router)
             .with_graceful_shutdown(stop_signal.cancelled_owned())
             .into_future()
