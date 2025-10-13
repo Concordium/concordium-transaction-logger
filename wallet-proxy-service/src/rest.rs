@@ -10,6 +10,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing};
 use concordium_rust_sdk::v2;
+use std::fmt::Display;
 use std::sync::Arc;
 use tower::layer;
 use tracing::{error, warn};
@@ -52,30 +53,49 @@ enum RestError {
     NotFound,
     #[error("{0:#}")]
     Anyhow(#[from] anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+enum RejectionError {
     #[error("invalid path parameters")]
     PathRejection(#[from] PathRejection),
 }
 
 #[derive(FromRequestParts)]
-#[from_request(via(axum::extract::Path), rejection(RestError))]
+#[from_request(via(axum::extract::Path), rejection(RejectionError))]
 struct AppPath<T>(T);
+
+fn error_response(err: &impl Display, http_status: StatusCode, error_code: ErrorCode) -> Response {
+    let error_resp = ErrorResponse {
+        error_message: err.to_string(),
+        error: error_code,
+    };
+
+    (http_status, Json(error_resp)).into_response()
+}
 
 impl IntoResponse for RestError {
     fn into_response(self) -> Response {
         let (status, error_code) = match self {
             RestError::NotFound => (StatusCode::NOT_FOUND, ErrorCode::NotFound),
             RestError::Anyhow(_) => (StatusCode::INTERNAL_SERVER_ERROR, ErrorCode::Internal),
-            RestError::PathRejection(_) => (StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest),
         };
 
-        let error_resp = ErrorResponse {
-            error_message: self.to_string(),
-            error: error_code,
-        };
-
-        let mut response = (status, Json(error_resp)).into_response();
+        let mut response = error_response(&self, status, error_code);
         response.extensions_mut().insert(Arc::new(self));
         response
+    }
+}
+
+impl IntoResponse for RejectionError {
+    fn into_response(self) -> Response {
+        let (status, error_code) = match self {
+            RejectionError::PathRejection(_) => {
+                (StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest)
+            }
+        };
+
+        error_response(&self, status, error_code)
     }
 }
 
