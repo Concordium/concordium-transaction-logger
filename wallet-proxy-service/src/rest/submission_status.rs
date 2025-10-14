@@ -1,7 +1,7 @@
 use crate::rest::{AppPath, RestResult, RestState};
 use anyhow::Context;
+use axum::extract::State;
 use axum::Json;
-use axum::extract::{Path, State};
 use concordium_rust_sdk::base::hashes::TransactionHash;
 use concordium_rust_sdk::types;
 use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
