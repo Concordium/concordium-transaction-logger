@@ -1,5 +1,6 @@
 /// Configuration of the Wallet Proxy service
 pub mod configuration;
+/// Initialization of logging
 pub mod logging;
 /// Monitoring API router (health, metrics, etc.)
 mod monitoring;

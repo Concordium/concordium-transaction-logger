@@ -1,4 +1,6 @@
+/// Health status enpoint
 mod health;
+/// Prometheus metrics endpoint
 mod metrics;
 
 use crate::monitoring::health::HealthState;

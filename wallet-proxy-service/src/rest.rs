@@ -1,9 +1,12 @@
+/// Custom middleware applied by the REST router
 mod middleware;
+
+// Modules for specific REST endpoints follows here:
 mod submission_status;
 
 use crate::configuration::Cli;
 use anyhow::Context;
-use axum::extract::rejection::PathRejection;
+use axum::extract::rejection::{PathRejection, QueryRejection};
 use axum::extract::{FromRequestParts, Request};
 use axum::http::StatusCode;
 use axum::middleware::Next;
@@ -47,6 +50,9 @@ struct RestState {
 
 type RestResult<A> = Result<A, RestError>;
 
+/// Error returned by REST endpoint handlers. Will
+/// be mapped to the right HTTP response (HTTP code and custom
+/// error body) by the axum middleware
 #[derive(Debug, thiserror::Error)]
 enum RestError {
     #[error("resource not found")]
@@ -55,15 +61,28 @@ enum RestError {
     Anyhow(#[from] anyhow::Error),
 }
 
+/// Error for handling rejections of invalid requests.
+/// Will be mapped to the right HTTP response (HTTP code and custom
+/// error body) by the axum middleware.
+///
+/// See <https://docs.rs/axum/latest/axum/extract/index.html#customizing-extractor-responses>
 #[derive(Debug, thiserror::Error)]
 enum RejectionError {
     #[error("invalid path parameters")]
     PathRejection(#[from] PathRejection),
+    #[error("invalid query parameters")]
+    QueryRejection(#[from] QueryRejection),
 }
 
+/// Extractor with build in error handling. Like [axum::extract::Path](Path) but will use [`RejectionError`] for rejection errors
 #[derive(FromRequestParts)]
 #[from_request(via(axum::extract::Path), rejection(RejectionError))]
 struct AppPath<T>(T);
+
+/// Extractor with build in error handling. Like [axum::extract::Query](Query) but will use [`RejectionError`] for rejection errors
+#[derive(FromRequestParts)]
+#[from_request(via(axum::extract::Query), rejection(RejectionError))]
+struct AppQuery<T>(T);
 
 fn error_response(err: &impl Display, http_status: StatusCode, error_code: ErrorCode) -> Response {
     let error_resp = ErrorResponse {

@@ -1,5 +1,3 @@
-//! Test of generic errors
-
 use crate::integration_test_helpers::{fixtures, node_mock, rest, server};
 use concordium_rust_sdk::v2::generated;
 use reqwest::StatusCode;
