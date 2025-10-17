@@ -329,13 +329,13 @@ impl PreparedStatements {
         }
 
         // insert contracts
-        let affected_contracts = ts.summary.affected_contracts().known_or_else(|| {
+        let affected_contracts = ts.summary.affected_contracts().known_or_else(|_| {
             log::error!("Could not determine affected contracts for a BlockItemSummary of unknown type. {:?}", ts.summary);
             IndexingError::UnknownData("Could not determine affected contracts for a BlockItemSummary of unknown type.".to_string())
         })?; // if Unknown, throw an error
 
         for contract_address in affected_contracts {
-            let affected = contract_address.known_or_else(|| {
+            let affected = contract_address.known_or_else(|_| {
                 log::error!("Could not determine affected contracts of an unknown type of AccountTransactionEffects. {:?}", ts.summary);
                 IndexingError::UnknownData("Could not determine affected contracts of an unknown type of AccountTransactionEffects.".to_string())
             })?; // encountered unknown contract_address, throw an error, this will stop the insert into db process and alert the user to update the rust SDK
@@ -604,7 +604,7 @@ fn get_cis2_events(bi: &BlockItemSummary) -> Result<ContractEffects, IndexingErr
             // Map each log into a Result
             let mut events: ContractEffects = Vec::new();
             for contract_log in log_iter {
-                let (ca, logs) = contract_log.known_or_else(|| {
+                let (ca, logs) = contract_log.known_or_else(|_| {
                     log::error!(
                         "Could not determine contract log, unknown type. {:?}",
                         contract_log
@@ -820,7 +820,7 @@ impl NodeHooks<TransactionLogData> for CanonicalAddressCache {
         let mut with_addresses = Vec::with_capacity(transaction_summaries.len());
         let mut key_update_addresses = HashSet::new();
         for summary in transaction_summaries {
-            let affected_addresses = summary.affected_addresses().known_or_else(|| {
+            let affected_addresses = summary.affected_addresses().known_or_else(|_| {
                 Status::unknown("Could not determine affected addresses for BlockItem")
             })?; // if unknown, throw Err Status::unknown
 
