@@ -1,21 +1,10 @@
-use crate::integration_test_helpers::run_server::ServerHandle;
 use reqwest::RequestBuilder;
 use std::fmt::Display;
-use std::sync::LazyLock;
 
-static REQWEST_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| reqwest::Client::new());
-
-pub fn rest_client(handle: &ServerHandle) -> RestClient {
+pub fn create_client(base_url: String) -> RestClient {
     RestClient {
-        client: Default::default(),
-        base_url: handle.properties().rest_url.clone(),
-    }
-}
-
-pub fn monitoring_client(handle: &ServerHandle) -> RestClient {
-    RestClient {
-        client: Default::default(),
-        base_url: handle.properties().monitoring_url.clone(),
+        client: reqwest::Client::new(),
+        base_url,
     }
 }
 
@@ -25,8 +14,17 @@ pub struct RestClient {
     base_url: String,
 }
 
+#[allow(dead_code)]
 impl RestClient {
     pub fn get(&self, path: impl Display) -> RequestBuilder {
         self.client.get(format!("{}/{}", self.base_url, path))
+    }
+
+    pub fn put(&self, path: impl Display) -> RequestBuilder {
+        self.client.put(format!("{}/{}", self.base_url, path))
+    }
+
+    pub fn post(&self, path: impl Display) -> RequestBuilder {
+        self.client.post(format!("{}/{}", self.base_url, path))
     }
 }

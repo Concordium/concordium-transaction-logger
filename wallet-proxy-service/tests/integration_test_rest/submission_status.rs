@@ -1,17 +1,15 @@
-use crate::integration_test_helpers::{fixtures, node_mock, rest_client, run_server};
+use crate::integration_test_helpers::{fixtures, server};
 use concordium_rust_sdk::v2::generated;
 use reqwest::StatusCode;
 use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
 
 #[tokio::test]
 async fn test_submission_status() {
-    let handle = run_server::start_server();
-    let rest_client = rest_client::rest_client(&handle);
-    let node_mock = node_mock::mock(&handle);
+    let handle = server::start_server();
 
     let txn_hash = fixtures::generate_txn_hash();
 
-    node_mock.mock(|when, then| {
+    handle.node_mock().mock(|when, then| {
         when.path("/concordium.v2.Queries/GetBlockItemStatus")
             .pb(generated::TransactionHash::from(&txn_hash));
         then.pb(generated::BlockItemStatus {
@@ -21,7 +19,8 @@ async fn test_submission_status() {
         });
     });
 
-    let resp = rest_client
+    let resp = handle
+        .rest_client()
         .get(format!("v0/submissionStatus/{}", txn_hash))
         .send()
         .await
@@ -34,19 +33,18 @@ async fn test_submission_status() {
 
 #[tokio::test]
 async fn test_submission_status_absent() {
-    let handle = run_server::start_server();
-    let rest_client = rest_client::rest_client(&handle);
-    let node_mock = node_mock::mock(&handle);
+    let handle = server::start_server();
 
     let txn_hash = fixtures::generate_txn_hash();
 
-    node_mock.mock(|when, then| {
+    handle.node_mock().mock(|when, then| {
         when.path("/concordium.v2.Queries/GetBlockItemStatus")
             .pb(generated::TransactionHash::from(&txn_hash));
         then.not_found().message("not found");
     });
 
-    let resp = rest_client
+    let resp = handle
+        .rest_client()
         .get(format!("v0/submissionStatus/{}", txn_hash))
         .send()
         .await

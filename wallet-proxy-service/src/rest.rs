@@ -15,7 +15,7 @@ use axum::{Json, Router, routing};
 use concordium_rust_sdk::v2;
 use std::fmt::Display;
 use std::sync::Arc;
-use tower::layer;
+
 use tracing::{error, warn};
 use wallet_proxy_api::{ErrorCode, ErrorResponse};
 
@@ -53,6 +53,7 @@ type RestResult<A> = Result<A, RestError>;
 /// Error returned by REST endpoint handlers. Will
 /// be mapped to the right HTTP response (HTTP code and custom
 /// error body) by the axum middleware
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 enum RestError {
     #[error("resource not found")]
@@ -82,6 +83,7 @@ struct AppPath<T>(T);
 /// Extractor with build in error handling. Like [axum::extract::Query](Query) but will use [`RejectionError`] for rejection errors
 #[derive(FromRequestParts)]
 #[from_request(via(axum::extract::Query), rejection(RejectionError))]
+#[allow(dead_code)]
 struct AppQuery<T>(T);
 
 fn error_response(err: &impl Display, http_status: StatusCode, error_code: ErrorCode) -> Response {

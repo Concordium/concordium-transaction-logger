@@ -1,7 +1,7 @@
 use crate::rest::{AppPath, RestResult, RestState};
 use anyhow::Context;
-use axum::extract::State;
 use axum::Json;
+use axum::extract::State;
 use concordium_rust_sdk::base::hashes::TransactionHash;
 use concordium_rust_sdk::types;
 use wallet_proxy_api::{SubmissionStatus, TransactionStatus};
@@ -11,13 +11,9 @@ pub async fn submission_status(
     State(mut state): State<RestState>,
     AppPath(txn_hash): AppPath<TransactionHash>,
 ) -> RestResult<Json<SubmissionStatus>> {
-    let result = state
-        .node_client
-        .get_block_item_status(&txn_hash)
-        .await
-        ;
+    let result = state.node_client.get_block_item_status(&txn_hash).await;
 
-    if result.as_ref().is_err_and(|err|err.is_not_found()) {
+    if result.as_ref().is_err_and(|err| err.is_not_found()) {
         return Ok(Json(submission_status_absent()));
     }
 

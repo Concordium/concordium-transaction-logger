@@ -1,4 +1,6 @@
-use crate::integration_test_helpers::{ServerProperties, node_mock};
+use crate::integration_test_helpers::node_mock::NodeMock;
+use crate::integration_test_helpers::rest_client::RestClient;
+use crate::integration_test_helpers::{node_mock, rest_client};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -37,9 +39,33 @@ const MONITORING_PORT: u16 = 18003;
 #[derive(Debug, Clone)]
 pub struct ServerHandle {
     properties: Arc<ServerProperties>,
+    node_mock: NodeMock,
+    rest_client: RestClient,
+    monitoring_client: RestClient,
 }
 
+#[allow(dead_code)]
+#[derive(Debug)]
+pub struct ServerProperties {
+    pub rest_url: String,
+    pub monitoring_url: String,
+    pub node_url: String,
+}
+
+#[allow(dead_code)]
 impl ServerHandle {
+    pub fn node_mock(&self) -> &NodeMock {
+        &self.node_mock
+    }
+
+    pub fn rest_client(&self) -> &RestClient {
+        &self.rest_client
+    }
+
+    pub fn monitoring_client(&self) -> &RestClient {
+        &self.monitoring_client
+    }
+
     pub fn properties(&self) -> &ServerProperties {
         &self.properties
     }
@@ -89,10 +115,16 @@ fn start_server_impl() -> ServerHandle {
         thread::sleep(Duration::from_millis(500));
     }
 
+    let rest_client = rest_client::create_client(properties.rest_url.clone());
+    let monitoring_client = rest_client::create_client(properties.monitoring_url.clone());
+
     info!("wallet proxy started with properties:\n{:#?}", properties);
 
     ServerHandle {
         properties: Arc::new(properties),
+        node_mock,
+        rest_client,
+        monitoring_client,
     }
 }
 
