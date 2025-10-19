@@ -112,6 +112,9 @@ impl IntoResponse for RejectionError {
             RejectionError::PathRejection(_) => {
                 (StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest)
             }
+            RejectionError::QueryRejection(_) => {
+                (StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest)
+            }
         };
 
         error_response(&self, status, error_code)

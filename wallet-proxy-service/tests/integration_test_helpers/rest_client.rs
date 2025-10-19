@@ -1,4 +1,4 @@
-use crate::integration_test_helpers::server::ServerHandle;
+use crate::integration_test_helpers::run_server::ServerHandle;
 use reqwest::RequestBuilder;
 use std::fmt::Display;
 use std::sync::LazyLock;

@@ -1,7 +1,7 @@
 pub mod fixtures;
 pub mod node_mock;
-pub mod rest;
-pub mod server;
+pub mod rest_client;
+pub mod run_server;
 
 #[derive(Debug)]
 pub struct ServerProperties {
@@ -11,4 +11,4 @@ pub struct ServerProperties {
 }
 
 // todo ar integrate into one helper call and one server type
-// todo ar use sdk client trait instead of proto mock
+

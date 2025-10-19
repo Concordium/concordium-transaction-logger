@@ -1,4 +1,4 @@
-use crate::integration_test_helpers::{fixtures, node_mock, rest, server};
+use crate::integration_test_helpers::{fixtures, node_mock, rest_client, run_server};
 use concordium_rust_sdk::v2::generated;
 use reqwest::StatusCode;
 use wallet_proxy_api::{ErrorCode, ErrorResponse};
@@ -7,8 +7,8 @@ use wallet_proxy_api::{ErrorCode, ErrorResponse};
 /// internal error code.
 #[tokio::test]
 async fn test_node_request_fails() {
-    let handle = server::start_server();
-    let rest_client = rest::rest_client(&handle);
+    let handle = run_server::start_server();
+    let rest_client = rest_client::rest_client(&handle);
     let node_mock = node_mock::mock(&handle);
 
     let txn_hash = fixtures::generate_txn_hash();
@@ -39,12 +39,12 @@ async fn test_node_request_fails() {
 /// fails.
 #[tokio::test]
 async fn test_invalid_request_path_parameter() {
-    let handle = server::start_server();
+    let handle = run_server::start_server();
 
     // invalid transaction hash
     let txn_hash = "aaa";
 
-    let rest_client = rest::rest_client(&handle);
+    let rest_client = rest_client::rest_client(&handle);
     let resp = rest_client
         .get(format!("v0/submissionStatus/{}", txn_hash))
         .send()

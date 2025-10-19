@@ -11,13 +11,25 @@ pub async fn submission_status(
     State(mut state): State<RestState>,
     AppPath(txn_hash): AppPath<TransactionHash>,
 ) -> RestResult<Json<SubmissionStatus>> {
-    let sdk_transaction_status = state
+    let result = state
         .node_client
         .get_block_item_status(&txn_hash)
         .await
-        .context("get_block_item_status")?;
+        ;
 
-    Ok(Json(to_submission_status(sdk_transaction_status)))
+    if result.as_ref().is_err_and(|err|err.is_not_found()) {
+        return Ok(Json(submission_status_absent()));
+    }
+
+    let transaction_status = result.context("get_block_item_status")?;
+
+    Ok(Json(to_submission_status(transaction_status)))
+}
+
+fn submission_status_absent() -> SubmissionStatus {
+    SubmissionStatus {
+        status: TransactionStatus::Absent,
+    }
 }
 
 fn to_submission_status(txn_status: types::TransactionStatus) -> SubmissionStatus {

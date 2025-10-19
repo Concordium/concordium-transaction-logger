@@ -1,4 +1,4 @@
-use crate::integration_test_helpers::server::{ServerHandle, ServerStartup};
+use crate::integration_test_helpers::run_server::{ServerHandle, ServerStartup};
 use mocktail::server::MockServer;
 use parking_lot::Mutex;
 
