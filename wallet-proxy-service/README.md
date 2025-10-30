@@ -1,7 +1,7 @@
 # Wallet Proxy Service
 
-Rust implementation of the Wallet Proxy API. The API is described
-in [API.md](API.md)
+Rust implementation of the Wallet Proxy Service. The API is described
+in [API.md](../wallet-proxy-api/API.md)
 
 ## Running the service
 
@@ -25,7 +25,7 @@ curl -XGET http://localhost:8003/metrics
 
 ### REST API
 
-The REST API is documented in [API.md](API.md)
+The REST API is documented in [API.md](../wallet-proxy-api/API.md)
 
 ## Configuration
 

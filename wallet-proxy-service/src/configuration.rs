@@ -2,7 +2,7 @@ use clap::Parser;
 use concordium_rust_sdk::v2;
 use std::net::SocketAddr;
 
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 pub struct Cli {
     /// The URL used for the database, something of the form:
     /// "postgres://postgres:example@localhost/walletproxy".
