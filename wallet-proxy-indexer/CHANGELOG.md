@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+## [0.17.0] - 2026-01-07
+
+- Update dependencies to support sponsored transactions.
+
 ## [0.16.0] - 2025-09-26
 
 - Fix an error caused by the Rust SDK incorrectly handling protocol versions, causing blocks on P6 to fail processing.
