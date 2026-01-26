@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+## [0.17.1] - 2026-01-26
+
+- Fixed a bug where sponsored transaction sponsor details are incorrectly represented.
+
 ## [0.17.0] - 2026-01-07
 
 - Update dependencies to support sponsored transactions.
