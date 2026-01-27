@@ -762,7 +762,7 @@ dependencies = [
 
 [[package]]
 name = "concordium-rust-sdk"
-version = "9.0.0"
+version = "9.0.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3584,7 +3584,7 @@ dependencies = [
 
 [[package]]
 name = "wallet-proxy-indexer"
-version = "0.17.0"
+version = "0.17.1"
 dependencies = [
  "anyhow",
  "async-trait",
