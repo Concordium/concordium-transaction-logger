@@ -3,11 +3,6 @@
 name: Transaction Logger cargo deny audit
 
 on:
-  # temp branch trigger
-  push:
-    branches:
-      - fix/COR-2282-cargo-deny-setup
-
   schedule:
     - cron: '0 12 * * *' # run every day at 12
   workflow_dispatch: # allows manual trigger
