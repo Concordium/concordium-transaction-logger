@@ -2,6 +2,11 @@
 
 ## Unreleased changes
 
+## [0.17.2] - 2026-03-10
+
+- Add indexes to optimize fetching summaries for a specific account and filtering entries by block height or timestamp.   
+- Add indexe to optimize fetching summaries for a specific account and efficient ordering by row id.  
+
 ## [0.17.1] - 2026-01-26
 
 - Fixed a bug where sponsored transaction sponsor details are incorrectly represented.

@@ -134,10 +134,12 @@ pub enum SchemaVersion {
     InitialSchema,
     #[display("0002: Adding account address bindings to public keys.")]
     AccountsPublicKeyBindings,
+    #[display("0003: Optimize affected account queries.")]
+    OptimizeAffectedAccountQueries,
 }
 impl SchemaVersion {
     /// The latest known version of the schema.
-    const LATEST: SchemaVersion = SchemaVersion::AccountsPublicKeyBindings;
+    const LATEST: SchemaVersion = SchemaVersion::OptimizeAffectedAccountQueries;
 
     /// Parse version number into a database schema version.
     /// None if the version is unknown.
@@ -161,6 +163,7 @@ impl SchemaVersion {
             SchemaVersion::Empty => false,
             SchemaVersion::InitialSchema => false,
             SchemaVersion::AccountsPublicKeyBindings => false,
+            SchemaVersion::OptimizeAffectedAccountQueries => false,
         }
     }
 
@@ -182,7 +185,15 @@ impl SchemaVersion {
                 m0002_acoount_public_key_binding::run(&mut tx, endpoints).await?;
                 SchemaVersion::AccountsPublicKeyBindings
             }
-            SchemaVersion::AccountsPublicKeyBindings => unimplemented!(
+            SchemaVersion::AccountsPublicKeyBindings => {
+                tx.batch_execute(include_str!(
+                    "../resources/m0003-index-for-query-by-block-height-or-timestamp-filter.sql"
+                ))
+                .await?;
+
+                SchemaVersion::OptimizeAffectedAccountQueries
+            }
+            SchemaVersion::OptimizeAffectedAccountQueries => unimplemented!(
                 "No migration implemented for database schema version {}",
                 self.as_i64()
             ),
