@@ -1,3 +1,4 @@
 [submodule "deps/concordium-rust-sdk"]
 	path = deps/concordium-rust-sdk
 	url = ../concordium-rust-sdk.git
+	branch = feature/p11-rbac
