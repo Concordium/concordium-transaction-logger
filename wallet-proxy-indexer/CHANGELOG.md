@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+- Repointing to rust-sdk allowing support for new RBAC events related to assignAdminRoles, revokeAdminRoles, updateMetaData
+
 ## [0.17.2] - 2026-03-10
 
 - Add indexes to optimize fetching summaries for a specific account and filtering entries by block height or timestamp.   
