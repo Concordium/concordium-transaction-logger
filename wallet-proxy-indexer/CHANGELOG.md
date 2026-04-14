@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+## [0.18.0] - 2026-04-14
+
 - Repointing to rust-sdk allowing support for new RBAC events related to assignAdminRoles, revokeAdminRoles, updateMetaData
 
 ## [0.17.2] - 2026-03-10
