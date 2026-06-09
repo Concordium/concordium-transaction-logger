@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+- Add support for logging PLT lock meta-update transaction summaries.
+- Preserve lock lifecycle events in summary JSON written to the database.
+- Keep affected-account indexing sender-only for lock lifecycle events while still indexing token holder accounts for balance-moving meta-update token events.
+
 ## [0.18.0] - 2026-04-14
 
 - Repointing to rust-sdk allowing support for new RBAC events related to assignAdminRoles, revokeAdminRoles, updateMetaData
