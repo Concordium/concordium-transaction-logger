@@ -1,0 +1,11 @@
+[package]
+name = "wallet-proxy-api"
+version = "0.1.0"
+edition = "2024"
+description = "Wallet Proxy Service API"
+authors.workspace = true
+
+[dependencies]
+concordium-rust-sdk.workspace = true
+serde.workspace = true
+
