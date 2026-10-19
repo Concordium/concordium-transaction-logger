@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+- Update rust-sdk to support new token update events
+
 ## [0.18.0] - 2026-04-14
 
 - Repointing to rust-sdk allowing support for new RBAC events related to assignAdminRoles, revokeAdminRoles, updateMetaData
