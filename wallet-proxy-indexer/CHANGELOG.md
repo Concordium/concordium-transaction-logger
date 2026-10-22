@@ -2,6 +2,8 @@
 
 ## Unreleased changes
 
+## [0.18.0-p11.0] - 2026-10-22
+
 - Update rust-sdk to support new token update events
 
 ## [0.18.0] - 2026-04-14
