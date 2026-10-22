@@ -7,5 +7,7 @@ COPY . .
 RUN cargo build -p wallet-proxy-indexer --release
 
 FROM ${base_image}
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates
 COPY --from=build /build/target/release/wallet-proxy-indexer /usr/local/bin/
 ENTRYPOINT [ "wallet-proxy-indexer" ]

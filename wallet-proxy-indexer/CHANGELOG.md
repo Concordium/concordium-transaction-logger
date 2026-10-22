@@ -2,7 +2,11 @@
 
 ## Unreleased changes
 
-## [0.19.1] - 2026-06-25
+## [0.19.1-p11.0] (devnet-p11-3) - 2026-10-22
+
+- Update rust-sdk to support new token update events
+
+## [0.19.1] (devnet-p11-2) - 2026-06-25
 
 - Fixed incompatibility of JSON model for lock related reject reasons
 
