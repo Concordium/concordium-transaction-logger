@@ -2,6 +2,10 @@
 
 ## Unreleased changes
 
+## [0.19.2] - 2026-11-12
+
+- Install CA certificates in the Docker image. Without them the indexer could not verify the certificate of an `https` node endpoint and failed to connect with a transport error.
+
 ## [0.19.1] - 2026-06-25
 
 - Fixed incompatibility of JSON model for lock related reject reasons
